@@ -1,0 +1,12 @@
+[project]
+name = "sdn-project-group-8"
+version = "0.1.0"
+description = "SDN Topology setup for our project on Detection and Isolation of Compromised Switches "
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mininet>=2.3.0.dev6",
+    "pandas",
+    "matplotlib",
+    "scapy"
+]
