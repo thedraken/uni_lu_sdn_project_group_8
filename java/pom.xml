@@ -1,0 +1,119 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.uni.lu</groupId>
+  <artifactId>onos_group_8</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>bundle</packaging>
+
+  <name>onos_group_8</name>
+  <description>Testing ONOS</description>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <onos.version>2.7.0</onos.version>
+    <!--ONOS 2.7 runs on Java 11, release also stops newer JDK APIs being used -->
+    <maven.compiler.release>11</maven.compiler.release>
+    <!--onos-maven-plugin only builds the .oar when onos.app.name is set, it
+        then generates app.xml and features.xml from these properties -->
+    <onos.app.name>org.uni.lu.Onos_setup_project</onos.app.name>
+    <onos.app.title>ONOS Group 8</onos.app.title>
+    <onos.app.origin>University of Luxembourg</onos.app.origin>
+    <onos.app.category>TODO</onos.app.category>
+  </properties>
+
+  <dependencies>
+    <!--ONOS Core Public API -->
+    <dependency>
+      <groupId>org.onosproject</groupId>
+      <artifactId>onos-api</artifactId>
+      <version>${onos.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!--OSGi Annotations for @Component, @Activate, @Reference -->
+    <dependency>
+      <groupId>org.osgi</groupId>
+      <artifactId>org.osgi.service.component.annotations</artifactId>
+      <version>1.4.0</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!--Logging -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.7.30</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!--JAX-RS API for the RBAC-guarded REST resource (@Path, @GET, Response) -->
+    <dependency>
+      <groupId>javax.ws.rs</groupId>
+      <artifactId>javax.ws.rs-api</artifactId>
+      <version>2.1</version>
+      <scope>provided</scope>
+    </dependency>
+
+    <!--ONOS REST helper base class (org.onlab.rest.AbstractWebApplication) -->
+    <dependency>
+      <groupId>org.onosproject</groupId>
+      <artifactId>onlab-rest</artifactId>
+      <version>${onos.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!--OSGi Bundle Packaging Plugin -->
+      <plugin>
+        <groupId>org.apache.felix</groupId>
+        <artifactId>maven-bundle-plugin</artifactId>
+        <version>5.1.8</version>
+        <extensions>true</extensions>
+        <configuration>
+          <instructions>
+            <Bundle-SymbolicName>${project.groupId}.${project.artifactId}</Bundle-SymbolicName>
+            <!--org.glassfish.jersey.servlet is named only as a string in
+                web.xml, so bnd's bytecode scan never sees it. List it
+                explicitly or the WAB fails to deploy and every /onos/monitor
+                path 404s. -->
+            <Import-Package>org.glassfish.jersey.servlet,!java.*,*</Import-Package>
+            <!--Package the bundle as a Web Application Bundle so ONOS mounts
+                the JAX-RS REST API. web.xml names the JAX-RS Application. -->
+            <_wab>src/main/webapp</_wab>
+            <Web-ContextPath>/onos/monitor</Web-ContextPath>
+          </instructions>
+        </configuration>
+      </plugin>
+
+      <!--ONOS Application Packaging Plugin (Generates app.xml and .oar) -->
+      <plugin>
+        <groupId>org.onosproject</groupId>
+        <artifactId>onos-maven-plugin</artifactId>
+        <version>2.2</version>
+        <executions>
+          <!--Generates the .cfgdef file so cfg set can change the thresholds -->
+          <execution>
+            <id>cfg</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>cfg</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>app</id>
+            <goals>
+              <goal>app</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+
+
