@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<app name="org.uni.lu.Onos_setup_project"
+     origin="University of Luxembourg"
+     version="${project.version}"
+     category="Traffic Analysis"
+     title="SDN Traffic Monitor"
+     featuresRepo="mvn:${project.groupId}/${project.artifactId}/${project.version}/xml/features"
+     features="${project.artifactId}"
+     apps="">
+    <description>Custom SDN monitoring application.</description>
+</app>

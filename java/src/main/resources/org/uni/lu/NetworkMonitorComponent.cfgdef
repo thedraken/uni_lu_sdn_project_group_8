@@ -1,0 +1,9 @@
+packetInThreshold|INTEGER|500|Packet-ins per second per device before an anomaly is raised
+flowModThreshold|INTEGER|50|Flow additions per second per device before an anomaly is raised
+newHostThreshold|INTEGER|1|New hosts per second before an anomaly is raised
+sustainedSeconds|INTEGER|5|Seconds a threshold must be exceeded before alerting
+maxFlowsPerDevice|INTEGER|500|Maximum flow rules per device before an anomaly is raised
+summaryInterval|INTEGER|10|Seconds between SUMMARY log lines
+roleAssignments|STRING|alice:admin,bob:operator,charlie:observer,onos:admin|RBAC role per user, as user:role pairs separated by commas
+rateLimitKbps|INTEGER|1000|Rate limit in kbit/s applied when mitigating
+autoMitigate|BOOLEAN|false|Automatically rate-limit a device that raises an anomaly
