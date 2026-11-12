@@ -34,6 +34,12 @@ docker exec onos /root/onos/bin/onos-app localhost activate org.onosproject.ovsd
 docker exec onos /root/onos/bin/onos-app localhost activate org.onosproject.drivers
 docker exec onos /root/onos/bin/onos-app localhost activate org.onosproject.fwd
 
+#Install my custom monitor
+echo "Copy ONOS monitor"
+docker cp onos_group_8-1.0-SNAPSHOT.oar onos:/root/monitor.oar
+echo "Install ONOS monitor"
+docker exec onos /root/onos/bin/onos-app localhost install! /root/monitor.oar
+
 MONITOR_LOG="output/onos_monitor.log"
 mkdir -p output
 echo "Write ONOS monitor details to $MONITOR_LOG"
