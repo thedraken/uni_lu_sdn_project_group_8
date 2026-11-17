@@ -54,9 +54,7 @@ This copies the required files into `~/group_8` inside the VM using SSH port `80
 If the repository was cloned directly inside the VM, run from the repository root:
 
 ```bash
-mkdir -p ~/group_8
-cp -r python/. ~/group_8/
-cp ./*.sh output/*.oar ~/group_8/
+./setup_vm.sh
 ```
 
 **5. Start the SDN environment**
@@ -76,6 +74,7 @@ The script starts ONOS, activates the required applications, installs the custom
 |---|---|
 | `generate_monitor_oar.sh` | Builds the custom ONOS monitoring application |
 | `copy_to_vm.sh` | Copies the project files into the VM |
+| `setup_vm.sh` | If already inside the VM, creates the directory and copies the needed files into there |
 | `setup_script.sh` | Starts ONOS and the SDN environment |
 | `python/main.py` | Launches the topology and traffic tests |
 | `python/sdn_setup/sdn_topology_setup.py` | Defines the network topology and tests |
