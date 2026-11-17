@@ -22,7 +22,7 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         info(f"Create {number_of_hosts} hosts, with specific IPs")
         hosts = []
         for i in range(number_of_hosts):
-            h = net.addHost('h{}'.format(i), ip='10.0.0.{}/16'.format(i))
+            h = net.addHost('h{}'.format(i), ip='10.0.0.{}/16'.format(i + 1))
             hosts.append(h)
 
 
@@ -30,16 +30,17 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         switches = []
         for i in range(number_of_switches):
             s = net.addSwitch('s{}'.format(i), protocols='OpenFlow13')
-            switches.append(s)
             for old_s in switches:
                 net.addLink(s, old_s)
+            switches.append(s)
 
         if connect_all_hosts_to_all_switches:
             for s in switches:
                 for h in hosts:
                     net.addLink(h, s)
         else:
-            info(f"TODO")#TODO
+            for i, h in enumerate(hosts):
+                net.addLink(h, switches[i % len(switches)])
 
         info("Build the network and start the devices")
         net.build()
@@ -51,18 +52,19 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
             info("Pinging all devices")
             net.pingAll()
             if len(hosts) > 2:
-                ping_output_first_ring = hosts[0].cmd(f'ping -c1 1'
+                ping_output_first_ring = hosts[0].cmd(f'ping -c1'
                                                       f' {hosts[1].IP()}')
-                ping_output_outer_ring = hosts[0].cmd(f'ping -c1 1 '
+                ping_output_outer_ring = hosts[0].cmd(f'ping -c1 '
                                                       f'{hosts[-1].IP()}')
                 print(ping_output_first_ring)
                 print(ping_output_outer_ring)
 
                 h1_server, h2_client = net.iperf([hosts[0], hosts[1]])
                 print(f'h1 server: {h1_server}', f'h2 client: {h2_client}')
+                hosts[0].cmd('iperf -s &')
+                hosts[0].cmd('sleep 1')
                 client_out = hosts[-1].cmd(f'iperf -c {hosts[0].IP()}')
                 print(client_out)
-            hosts[0].cmd('iperf -s &')
             for node in net.hosts:
                 print(f"Node {node.name}: IP={node.IP()}, MAC={node.MAC()}")
 

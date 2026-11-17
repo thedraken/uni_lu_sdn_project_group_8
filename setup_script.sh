@@ -18,10 +18,24 @@ sudo mn -c
 
 echo "Waiting for ONOS REST API to be ready"
 #Wait until ONOS has started up
-until [ "$(docker exec onos curl -s -o /dev/null -w "%{http_code}" -u onos:rocks http://localhost:8181/onos/v1/applications)" -eq 200 ]; do
-  echo "Wait 5 more seconds"
-  sleep 5
+ONOS_READY=false
+
+for attempt in $(seq 1 24); do
+    HTTP_CODE=$(docker exec onos curl -s -o /dev/null -w "%{http_code}"       -u onos:rocks http://localhost:8181/onos/v1/applications 2>/dev/null)
+
+    if [ "$HTTP_CODE" = "200" ]; then
+        ONOS_READY=true
+        break
+    fi
+
+    echo "ONOS not ready (attempt $attempt/24)"
+    sleep 5
 done
+
+if [ "$ONOS_READY" != "true" ]; then
+    echo "ERROR: ONOS REST API did not become ready within the timeout." >&2
+    exit 1
+fi
 
 #Sometimes, the API is not ready even though the web interface is, so add a further 5 seconds delay
 echo "Final sleep, make sure all services are running"
@@ -40,6 +54,7 @@ docker cp onos_group_8-1.0-SNAPSHOT.oar onos:/root/monitor.oar
 echo "Install ONOS monitor"
 docker exec onos /root/onos/bin/onos-app localhost install! /root/monitor.oar
 
+mkdir -p pcap
 MONITOR_LOG="output/onos_monitor.log"
 mkdir -p output
 echo "Write ONOS monitor details to $MONITOR_LOG"
@@ -48,39 +63,58 @@ docker exec onos sh -c 'echo $$ > /tmp/monitor_tail.pid; exec tail -n 0 -F /root
 
 
 TEMP_PCAP="/tmp/sdn_capture.pcap"
+sudo rm -f /tmp/group8_tshark.pid
 echo "Launch tshark"
 
-sudo tshark -i any -f "not port 22" -s 256 -b filesize:10000 -a duration:600 -w "$TEMP_PCAP" > /tmp/tshark_debug.log 2>&1 &
+sudo bash -c '
+  echo $$ > /tmp/group8_tshark.pid
+  exec tshark -i any -f "not port 22" -s 256 \
+    -w /tmp/sdn_capture.pcap
+' > /tmp/tshark_debug.log 2>&1 &
 TSHARK_PID=$!
 
 echo "Sleep for 5, wait for tshark"
 sleep 5
 
 #Is tshark running?
-if ps -p $TSHARK_PID >/dev/null; then
-  echo "tshark is running successfully (PID: $TSHARK_PID)"
+if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)" 2>/dev/null; then
+  echo "tshark is running successfully (PID: $(cat /tmp/group8_tshark.pid))"
   #See if ny program ran, sometimes the command is too quick
   #read -p "Press [Enter] to continue, is tshark running?"
 
   #Start my script
-  sudo python3 python/main.py
+  sudo python3 main.py
 
   echo "Sleeping for 5, make sure tshark has finished"
   sleep 5
 
-  #Kill tshark after mininet exit
-  sudo kill $TSHARK_PID 2>/dev/null || true
-  sleep 5
-  echo "Move the file to the correction destination"
-  sudo mv /tmp/*.pcap pcap/
+  # Stop TShark after Mininet exits and wait for capture to finish
+  if [ -f /tmp/group8_tshark.pid ]; then
+    sudo kill -INT "$(cat /tmp/group8_tshark.pid)" 2>/dev/null || true
+  fi
+  wait "$TSHARK_PID" 2>/dev/null || true
+  sudo rm -f /tmp/group8_tshark.pid
 
-  echo "Capture complete: $FINAL_PCAP"
+  echo "Move the capture to its destination"
+  if [ -f "$TEMP_PCAP" ]; then
+    if sudo mv "$TEMP_PCAP" pcap/; then
+      echo "Capture complete: pcap/$(basename "$TEMP_PCAP")"
+    else
+      echo "ERROR: Failed to move PCAP file." >&2
+    fi
+  else
+    echo "WARNING: PCAP file was not created." >&2
+  fi
   ls -lh pcap/
 else
   echo "tshark failed to start!"
   cat /tmp/tshark_debug.log
+  sudo rm -f /tmp/group8_tshark.pid
 fi
 
 #Stop the background tail inside the container, grep then exits with it
-docker exec onos sh -c 'kill $(cat /tmp/monitor_tail.pid)' 2>/dev/null || true
+docker exec onos sh -c 'if [ -f /tmp/monitor_tail.pid ]; then
+  kill "$(cat /tmp/monitor_tail.pid)" 2>/dev/null || true
+  rm -f /tmp/monitor_tail.pid
+fi' 2>/dev/null || true
 echo "ONOS monitor log: $MONITOR_LOG"
