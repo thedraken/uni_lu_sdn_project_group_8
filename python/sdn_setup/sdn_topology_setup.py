@@ -39,7 +39,23 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                 for h in hosts:
                     net.addLink(h, s)
         else:
-            info(f"TODO")#TODO
+            hosts_per_switch = number_of_hosts / number_of_switches
+            switch_number = 0
+            host_number = 0
+            for h in hosts:
+                info(f"Adding link between host {h} and switch"
+                     f" {switches[switch_number]}")
+                net.addLink(h, switches[switch_number])
+                host_number += 1
+                if host_number > hosts_per_switch:
+                    switch_number += 1
+                    #Safety catch, move the last few hosts to s0 if
+                    # exceeding what we are expecting
+                    if switch_number > len(switches):
+                        switch_number = 0
+
+
+            # hosts are distributed between the switches
 
         info("Build the network and start the devices")
         net.build()
