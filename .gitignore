@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SDN project generated artifacts
+/output/
+/pcap/
+*.pcapng
