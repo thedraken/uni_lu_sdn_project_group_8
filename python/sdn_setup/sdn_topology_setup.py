@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-from mininet.net import Mininet
-from mininet.node import OVSSwitch, RemoteController
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
+from mininet.net import Mininet
+from mininet.node import OVSSwitch, RemoteController
+
 
 #Create the network topology
 def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
@@ -31,6 +32,8 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         for i in range(number_of_switches):
             s = net.addSwitch('s{}'.format(i), protocols='OpenFlow13')
             for old_s in switches:
+                info(f"Adding link between switch {s} and switch"
+                     f" {old_s}")
                 net.addLink(s, old_s)
             switches.append(s)
 
