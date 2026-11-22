@@ -84,7 +84,8 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
 
   uv sync
   #Start the script
-  sudo uv run main.py
+  # Can pass attack value into script
+  sudo .venv/bin/python main.py "$@"
 
   echo "Sleeping for 5, make sure tshark has finished"
   sleep 5

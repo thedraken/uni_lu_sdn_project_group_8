@@ -46,7 +46,8 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                     __net__.addLink(s, old_s)
             switches.append(s)
 
-        if topology_type == "ring" and switches:
+        #With 1 switch this would link s0 to itself, with 2 it would duplicate the s0-s1 link
+        if topology_type == "ring" and len(switches) > 2:
             #Ring of switches, need a link between last switch and first switch
             info(f"Adding link between switch {switches[0]} and switch"
                  f" {switches[-1]}")
@@ -88,10 +89,16 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         if start_cli:
             info("Ready for command line interface")
             CLI(__net__)
+        return __net__
+    except BaseException:
+        #Setup failed: without the CLI, nothing else would stop the half-built network
+        if not start_cli:
+            stop_topology()
+        raise
     finally:
         if start_cli:
             #Assume the user has exited CLI, stop the network
-            __net__.stop()
+            stop_topology()
 
 def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
@@ -99,7 +106,8 @@ def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                             topology_type:str="mesh",
                             start_cli:bool=True):
     setLogLevel('debug')
-    _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type, start_cli)
+    #Returns the running network when start_cli is False; call stop_topology() when done
+    return _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type, start_cli)
 
 
 # noinspection unreachable-code
