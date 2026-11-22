@@ -9,7 +9,8 @@ from mininet.node import OVSSwitch, RemoteController
 #Create the network topology
 def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
-                          connect_all_hosts_to_all_switches:bool=False):
+                          connect_all_hosts_to_all_switches:bool=False,
+                          topology_type:str="mesh"):
     net = Mininet(switch=OVSSwitch, build=False)
     try:
         info("Create controller")
@@ -31,11 +32,22 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         switches = []
         for i in range(number_of_switches):
             s = net.addSwitch('s{}'.format(i), protocols='OpenFlow13')
-            for old_s in switches:
+            if (topology_type == "linear" or topology_type == "ring") and switches:
                 info(f"Adding link between switch {s} and switch"
-                     f" {old_s}")
-                net.addLink(s, old_s)
+                     f" {switches[-1]}")
+                net.addLink(s, switches[-1])
+            else:  #mesh
+                for old_s in switches:
+                    info(f"Adding link between switch {s} and switch"
+                         f" {old_s}")
+                    net.addLink(s, old_s)
             switches.append(s)
+
+        if topology_type == "ring" and switches:
+            #Ring of switches, need a link between last switch and first switch
+            info(f"Adding link between switch {switches[0]} and switch"
+                 f" {switches[-1]}")
+            net.addLink(switches[0], switches[-1])
 
         if connect_all_hosts_to_all_switches:
             for s in switches:
@@ -79,6 +91,7 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
 
 def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
-                          connect_all_hosts_to_all_switches:bool=False):
+                          connect_all_hosts_to_all_switches:bool=False,
+                            topology_type:str="mesh"):
     setLogLevel('debug')
-    _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches)
+    _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type)
