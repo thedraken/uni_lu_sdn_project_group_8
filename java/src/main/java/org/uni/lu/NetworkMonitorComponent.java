@@ -1,6 +1,5 @@
 package org.uni.lu;
 
-import org.joda.time.DateTime;
 import org.onlab.packet.*;
 import org.onosproject.cfg.ComponentConfigService;
 import org.onosproject.core.ApplicationId;
@@ -109,7 +108,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private final Map<DeviceId, AtomicLong> flowAdds = new ConcurrentHashMap<>();
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
-    private int packetCheckInterval = 10;
+    private int packetCheckInterval = 60;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
@@ -264,8 +263,13 @@ public class NetworkMonitorComponent implements MonitorService {
     }
 
     private void checkPacketAnomalies() {
-        Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>(devicePacketMonitorMap);
-        devicePacketMonitorMap.clear();
+        Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>();
+        for (DeviceId deviceId : devicePacketMonitorMap.keySet()) {
+            List<PacketDetail> details = devicePacketMonitorMap.remove(deviceId);
+            if (details != null) {
+                devicePacketMap.put(deviceId, details);
+            }
+        }
         if (!devicePacketMap.isEmpty()) {
             //TODO handle if the packetDetail map has too many dropped connections
         }
@@ -548,22 +552,31 @@ public class NetworkMonitorComponent implements MonitorService {
                              event.port().number(), event.port().isEnabled());
                     break;
                 case PORT_STATS_UPDATED:
-                    List<PortStatistics> portStatistics = deviceService.getPortDeltaStatistics(event.subject().id());
-                    devicePacketMonitorMap.putIfAbsent(event.subject().id(), new ArrayList<>());
-                    portStatistics.forEach(ps -> {
-                        if (ps.portNumber() != PortNumber.LOCAL) {
-                            devicePacketMonitorMap.get(event.subject().id()).add(
-                                    new PacketDetail(event.subject().id(),
-                                            ps.portNumber(),
-                                            ps.packetsReceived(),
-                                            ps.packetsSent(),
-                                            ps.packetsRxDropped(),
-                                            ps.packetsRxDropped(),
-                                            new DateTime()));
-                        } else {
-                            log.debug("Not adding port {} for device {} as it is classified as normal", ps.portNumber(), event.subject().id());
+                    DeviceId statsDeviceId = event.subject().id();
+                    Instant polledAt = Instant.now();
+                    List<PacketDetail> pollDetails = new ArrayList<>();
+                    for (PortStatistics ps : deviceService.getPortDeltaStatistics(statsDeviceId)) {
+                        if (PortNumber.LOCAL.equals(ps.portNumber())) {
+                            log.debug("Not adding port {} for device {} as it is the switch's internal port",
+                                    ps.portNumber(), statsDeviceId);
+                            continue;
                         }
-                    });
+                        pollDetails.add(new PacketDetail(statsDeviceId,
+                                ps.portNumber(),
+                                ps.packetsReceived(),
+                                ps.packetsSent(),
+                                ps.packetsRxDropped(),
+                                ps.packetsTxDropped(),
+                                polledAt));
+                    }
+                    if (!pollDetails.isEmpty()) {
+                        devicePacketMonitorMap.merge(statsDeviceId, List.copyOf(pollDetails),
+                                (existing, added) -> {
+                                    List<PacketDetail> combined = new ArrayList<>(existing);
+                                    combined.addAll(added);
+                                    return List.copyOf(combined);
+                                });
+                    }
                     break;
             }
         }

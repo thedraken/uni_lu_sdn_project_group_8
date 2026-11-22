@@ -1,9 +1,9 @@
 package org.uni.lu.domain;
 
-import org.joda.time.DateTime;
 import org.onosproject.net.DeviceId;
 import org.onosproject.net.PortNumber;
 
+import java.time.Instant;
 import java.util.Objects;
 
 public class PacketDetail {
@@ -15,10 +15,10 @@ public class PacketDetail {
     private final long packetsSent;
     private final long packetsReceivedDropped;
     private final long packetsSentDropped;
-    private final DateTime dateTime;
+    private final Instant dateTime;
 
 
-    public PacketDetail(DeviceId deviceId, PortNumber portNumber, long packetsReceived, long packetsSent, long packetsReceivedDropped, long packetsSentDropped, DateTime dateTime) {
+    public PacketDetail(DeviceId deviceId, PortNumber portNumber, long packetsReceived, long packetsSent, long packetsReceivedDropped, long packetsSentDropped, Instant dateTime) {
         this.deviceId = deviceId;
         this.portNumber = portNumber;
         this.packetsReceived = packetsReceived;
@@ -52,7 +52,7 @@ public class PacketDetail {
         return packetsReceivedDropped;
     }
 
-    public DateTime getDateTime() {
+    public Instant getDateTime() {
         return dateTime;
     }
 

@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Component(immediate = true)
+@Component(immediate = true, service = DeviceAdmin.class)
 public class DeviceAdmin {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceAdmin.class);
@@ -38,7 +38,6 @@ public class DeviceAdmin {
     public void isolate(DeviceId deviceId) {
         //Connect points to close, set needs building
         Set<ConnectPoint> closedPorts = new HashSet<>();
-        isolatedSwitches.putIfAbsent(deviceId, closedPorts);
         try {
             linkService.getDeviceIngressLinks(deviceId).forEach(link -> {
                 ConnectPoint originPort = link.src();
@@ -47,7 +46,7 @@ public class DeviceAdmin {
                 closedPorts.add(originPort);
             });
             //Calling isolate() twice might overwrite the saved ports with an empty set if ONOS no longer sees the links, preventing reinstate() from restoring them.
-            isolatedSwitches.get(deviceId).addAll(closedPorts);
+            isolatedSwitches.computeIfAbsent(deviceId, id -> ConcurrentHashMap.newKeySet()).addAll(closedPorts);
             log.info("Switch {} was isolated on ports: [{}]", deviceId, StringHelper.collectionToString(closedPorts, ";"));
         } catch (Exception e) {
             log.error("Error closing the ports to device {}", deviceId, e);
@@ -83,9 +82,14 @@ public class DeviceAdmin {
             //This way, if we call reinstate again, we can reactivate them if needed
             if (connectPointsToReEnable != null) {
                 isolatedSwitches.put(deviceId, connectPointsToReEnable);
+                connectPointsToReEnable.forEach(connectPoint -> {
+                    try {
+                        deviceAdminService.changePortState(connectPoint.deviceId(), connectPoint.port(), false);
+                    } catch (Exception innerE) {
+                        log.error("Error re-closing port {} for device {}", connectPoint, deviceId, innerE);
+                    }
+                });
             }
-            //Reisolate the device ID, as we do not want to be in a partial state
-            isolate(deviceId);
         }
     }
 }
