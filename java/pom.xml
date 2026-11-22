@@ -22,6 +22,7 @@
     <onos.app.title>ONOS Group 8</onos.app.title>
     <onos.app.origin>University of Luxembourg</onos.app.origin>
     <onos.app.category>TODO</onos.app.category>
+    <java.version>11</java.version>
   </properties>
 
   <dependencies>

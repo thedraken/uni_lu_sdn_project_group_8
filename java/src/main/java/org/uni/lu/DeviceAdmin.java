@@ -4,6 +4,7 @@ import org.onosproject.net.ConnectPoint;
 import org.onosproject.net.DeviceId;
 import org.onosproject.net.device.DeviceAdminService;
 import org.onosproject.net.link.LinkService;
+import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.slf4j.Logger;
@@ -14,9 +15,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Component(immediate = true)
 public class DeviceAdmin {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceAdmin.class);
+
 
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected DeviceAdminService deviceAdminService;
@@ -36,6 +39,7 @@ public class DeviceAdmin {
     public void isolate(DeviceId deviceId) {
         //Connect points to close, set needs building
         Set<ConnectPoint> closedPorts = new HashSet<>();
+        isolatedSwitches.putIfAbsent(deviceId, closedPorts);
         try {
             linkService.getDeviceIngressLinks(deviceId).forEach(link -> {
                 ConnectPoint originPort = link.src();
@@ -43,7 +47,8 @@ public class DeviceAdmin {
                 deviceAdminService.changePortState(originPort.deviceId(), originPort.port(), false);
                 closedPorts.add(originPort);
             });
-            isolatedSwitches.put(deviceId, closedPorts);
+            //Calling isolate() twice might overwrite the saved ports with an empty set if ONOS no longer sees the links, preventing reinstate() from restoring them.
+            isolatedSwitches.get(deviceId).addAll(closedPorts);
             log.info("Switch {} was isolated on ports: [{}]", deviceId, StringHelper.collectionToString(closedPorts, ";"));
         } catch (Exception e) {
             log.error("Error closing the ports to device {}", deviceId, e);
@@ -64,8 +69,9 @@ public class DeviceAdmin {
      * @param deviceId The device ID to re-enable, if none is found, no ports are re-opened
      */
     public void reinstate(DeviceId deviceId) {
+        Set<ConnectPoint> connectPointsToReEnable = null;
         try {
-            Set<ConnectPoint> connectPointsToReEnable = isolatedSwitches.remove(deviceId);
+            connectPointsToReEnable = isolatedSwitches.remove(deviceId);
             //If device ID found in the hashset, work through the ports and re-enable them
             if (connectPointsToReEnable != null && !connectPointsToReEnable.isEmpty()) {
                 connectPointsToReEnable.forEach(connectPoint ->
@@ -74,6 +80,11 @@ public class DeviceAdmin {
             }
         } catch (Exception e) {
             log.error("Error opening the ports to device {}", deviceId, e);
+            //Re-add connections that were isolated, we do not know where we were in the code when the failure happened
+            //This way, if we call reinstate again, we can reactivate them if needed
+            if (connectPointsToReEnable != null) {
+                isolatedSwitches.put(deviceId, connectPointsToReEnable);
+            }
             //Reisolate the device ID, as we do not want to be in a partial state
             isolate(deviceId);
         }
