@@ -5,8 +5,9 @@ from logging import info
 
 import attacks.greyhole
 import attacks.blackhole
+import sdn_setup.sdn_topology_setup
 
-from sdn_setup.sdn_topology_setup import create_topology
+import sdn_setup.sdn_topology_setup as sdn_setup_cur
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
@@ -15,6 +16,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--switches", type=int, default=3)
     arg_parser.add_argument("--connect_all_hosts")
     arg_parser.add_argument("--attack", type=str, choices=["greyhole", "blackhole"])
+    arg_parser.add_argument("--topology_type", type=str, choices=["mesh", "ring", "linear"], default="mesh")
 
     args = arg_parser.parse_args(sys.argv)
 
@@ -27,7 +29,16 @@ if __name__ == "__main__":
     if args.connect_all_hosts:
         connect_all_hosts = True
 
-    create_topology(do_tests, args.hosts, args.switches, connect_all_hosts)
+    start_cli = True
+    if args.attack:
+        start_cli = False
+
+    sdn_setup_cur.create_topology(do_tests=do_tests,
+                    number_of_hosts=args.hosts,
+                    number_of_switches=args.switches,
+                    connect_all_hosts_to_all_switches=connect_all_hosts,
+                    topology_type=args.topology_type,
+                    start_cli=start_cli)
 
     if args.attack:
         info(f"Doing attack {args.attack}")
@@ -35,4 +46,5 @@ if __name__ == "__main__":
             attacks.greyhole.do_attack()
         elif args.attack == "blackhole":
             attacks.blackhole.do_attack()
+        sdn_setup_cur.stop_topology()
 

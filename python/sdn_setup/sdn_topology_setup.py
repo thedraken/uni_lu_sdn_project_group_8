@@ -5,12 +5,15 @@ from mininet.log import setLogLevel, info
 from mininet.net import Mininet
 from mininet.node import OVSSwitch, RemoteController
 
+net = None
 
 #Create the network topology
 def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
                           connect_all_hosts_to_all_switches:bool=False,
-                          topology_type:str="mesh"):
+                          topology_type:str="mesh",
+                          start_cli:bool=True):
+    global net
     net = Mininet(switch=OVSSwitch, build=False)
     try:
         info("Create controller")
@@ -82,16 +85,24 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                 print(client_out)
             for node in net.hosts:
                 print(f"Node {node.name}: IP={node.IP()}, MAC={node.MAC()}")
-
-        info("Ready for command line interface")
-        CLI(net)
+        if start_cli:
+            info("Ready for command line interface")
+            CLI(net)
     finally:
         #Assume the user has exited CLI, stop the network
-        net.stop()
+        if start_cli:
+            net.stop()
 
 def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
                           connect_all_hosts_to_all_switches:bool=False,
-                            topology_type:str="mesh"):
+                            topology_type:str="mesh",
+                            start_cli:bool=True):
     setLogLevel('debug')
-    _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type)
+    _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type, start_cli)
+
+def stop_topology():
+    global net
+    if net is not None:
+        net.stop()
+        net = None
