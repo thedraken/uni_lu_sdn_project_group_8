@@ -1,16 +1,15 @@
 package org.uni.lu;
 
+import org.joda.time.DateTime;
 import org.onlab.packet.*;
 import org.onosproject.cfg.ComponentConfigService;
 import org.onosproject.core.ApplicationId;
 import org.onosproject.core.CoreService;
-import org.onosproject.net.ConnectPoint;
-import org.onosproject.net.Device;
-import org.onosproject.net.DeviceId;
-import org.onosproject.net.Host;
+import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceEvent;
 import org.onosproject.net.device.DeviceListener;
 import org.onosproject.net.device.DeviceService;
+import org.onosproject.net.device.PortStatistics;
 import org.onosproject.net.flow.FlowRuleEvent;
 import org.onosproject.net.flow.FlowRuleListener;
 import org.onosproject.net.flow.FlowRuleService;
@@ -28,6 +27,7 @@ import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.uni.lu.domain.PacketDetail;
 
 import java.time.Instant;
 import java.util.*;
@@ -85,6 +85,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private int sustainedSeconds = 5;
     private int maxFlowsPerDevice = 1000;
     private int summaryInterval = 10;
+    private final Map<DeviceId, List<PacketDetail>> devicePacketMonitorMap = new ConcurrentHashMap<>();
     private int rateLimitKbps = 1000;
     private boolean autoMitigate = false;
 
@@ -108,6 +109,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private final Map<DeviceId, AtomicLong> flowAdds = new ConcurrentHashMap<>();
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
+    private int packetCheckInterval = 10;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
@@ -122,6 +124,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private final AtomicLong summaryFlowRemoves = new AtomicLong();
     private final AtomicLong summaryTopologyEvents = new AtomicLong();
     private long secondsSinceSummary = 0;
+    private long secondsSincePacketCheck = 0;
 
     private ScheduledExecutorService executor;
 
@@ -247,9 +250,24 @@ public class NetworkMonitorComponent implements MonitorService {
                 checkFlowTables();
                 logSummary();
             }
+
+            secondsSincePacketCheck++;
+            if (secondsSincePacketCheck >= packetCheckInterval) {
+                secondsSincePacketCheck = 0;
+                checkPacketAnomalies();
+            }
+
         } catch (Exception e) {
             //An exception would stop the scheduled task for good
             log.error("Monitor check failed", e);
+        }
+    }
+
+    private void checkPacketAnomalies() {
+        Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>(devicePacketMonitorMap);
+        devicePacketMonitorMap.clear();
+        if (!devicePacketMap.isEmpty()) {
+            //TODO handle if the packetDetail map has too many dropped connections
         }
     }
 
@@ -529,8 +547,23 @@ public class NetworkMonitorComponent implements MonitorService {
                     log.info("PORT_UPDATED {} port {} enabled={}", event.subject().id(),
                              event.port().number(), event.port().isEnabled());
                     break;
-                default:
-                    //Port stats updates arrive every few seconds, too noisy to log
+                case PORT_STATS_UPDATED:
+                    List<PortStatistics> portStatistics = deviceService.getPortDeltaStatistics(event.subject().id());
+                    devicePacketMonitorMap.putIfAbsent(event.subject().id(), new ArrayList<>());
+                    portStatistics.forEach(ps -> {
+                        if (ps.portNumber() != PortNumber.LOCAL) {
+                            devicePacketMonitorMap.get(event.subject().id()).add(
+                                    new PacketDetail(event.subject().id(),
+                                            ps.portNumber(),
+                                            ps.packetsReceived(),
+                                            ps.packetsSent(),
+                                            ps.packetsRxDropped(),
+                                            ps.packetsRxDropped(),
+                                            new DateTime()));
+                        } else {
+                            log.debug("Not adding port {} for device {} as it is classified as normal", ps.portNumber(), event.subject().id());
+                        }
+                    });
                     break;
             }
         }

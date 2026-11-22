@@ -20,7 +20,6 @@ public class DeviceAdmin {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceAdmin.class);
 
-
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected DeviceAdminService deviceAdminService;
 
