@@ -89,8 +89,8 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
             info("Ready for command line interface")
             CLI(net)
     finally:
-        #Assume the user has exited CLI, stop the network
         if start_cli:
+            #Assume the user has exited CLI, stop the network
             net.stop()
 
 def create_topology(do_tests:bool=False, number_of_hosts:int=7,
@@ -101,6 +101,8 @@ def create_topology(do_tests:bool=False, number_of_hosts:int=7,
     setLogLevel('debug')
     _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type, start_cli)
 
+
+# noinspection unreachable-code
 def stop_topology():
     global net
     if net is not None:
