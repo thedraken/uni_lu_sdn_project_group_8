@@ -82,8 +82,9 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
   #See if ny program ran, sometimes the command is too quick
   #read -p "Press [Enter] to continue, is tshark running?"
 
-  #Start my script
-  sudo python3 main.py
+  uv sync
+  #Start the script
+  sudo uv run main.py
 
   echo "Sleeping for 5, make sure tshark has finished"
   sleep 5
