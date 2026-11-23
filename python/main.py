@@ -7,6 +7,7 @@ from mininet.cli import CLI
 from mininet.log import info
 
 import attacks.blackhole
+import attacks.common
 import attacks.greyhole
 import attacks.random_drop
 import sdn_setup.sdn_topology_setup as sdn_setup_cur
@@ -27,7 +28,7 @@ def start_attack(net, args):
 
 def stop_attack(net, args):
     if args.attack == "greyhole" or args.attack == "blackhole":
-        attacks.common.stop_attack(net, args.target)
+        attacks.common.stop_attack(net, args.target, args.attack)
     elif args.attack == "random":
         attacks.random_drop.stop_attack(net, args.target)
 

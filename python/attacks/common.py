@@ -5,25 +5,22 @@ from mininet.node import Switch
 
 ATTACK_LOG = "output/attack.log"
 
-"""
-Logs the event during the attacks
-"""
-
 
 def log_event(message: str):
+    """
+    Logs the event during the attacks
+    """
     line = f"{datetime.now().isoformat(timespec='milliseconds')} {message}"
     info(line + "\n")
     with open(ATTACK_LOG, "a") as f:
         f.write(line + "\n")
 
 
-"""
-Interfaces of this switch whose other end is another switch.
-Host-facing ports are left alone, so only transit traffic is attacked.
-"""
-
-
 def switch_facing_interfaces(switch) -> list[str]:
+    """
+    Interfaces of this switch whose other end is another switch.
+    Host-facing ports are left alone, so only transit traffic is attacked.
+    """
     names = []
     for intf in switch.intfList():
         link = intf.link
@@ -36,13 +33,11 @@ def switch_facing_interfaces(switch) -> list[str]:
     return names
 
 
-"""
-Drop loss_pct% of packets leaving the switch towards other switches.
-`netem` works below OVS, so ONOS cannot see or remove it, as a compromised switch would behave.
-"""
-
-
 def apply_loss(switch, loss_pct: int):
+    """
+    Drop loss_pct% of packets leaving the switch towards other switches.
+    `netem` works below OVS, so ONOS cannot see or remove it, as a compromised switch would behave.
+    """
     for name in switch_facing_interfaces(switch):
         out = switch.cmd(
             f"tc qdisc replace dev {name} root netem loss {loss_pct}%")
@@ -56,12 +51,10 @@ def clear_loss(switch):
         switch.cmd(f"tc qdisc del dev {name} root 2>/dev/null")
 
 
-"""
-Stops the dropping process, logs the event
-"""
-
-
-def stop_attack(net, target: str):
+def stop_attack(net, target: str, attack_name: str):
+    """
+    Stops the dropping process, logs the event
+    """
     switch = net.get(target)
     clear_loss(switch)
-    log_event(f"ATTACK_STOP {switch.name}")
+    log_event(f"ATTACK_STOP {attack_name} {switch.name}")
