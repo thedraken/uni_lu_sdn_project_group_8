@@ -184,6 +184,8 @@ public class NetworkMonitorComponent implements MonitorService {
         summaryInterval = intProperty(properties, "summaryInterval", summaryInterval);
         rateLimitKbps = intProperty(properties, "rateLimitKbps", rateLimitKbps);
         autoMitigate = boolProperty(properties, "autoMitigate", autoMitigate);
+        packetCheckInterval = intProperty(properties, "packetCheckInterval", packetCheckInterval);
+        maxPacketDifference = intProperty(properties, "maxPacketDifference", maxPacketDifference);
         roleAssignments = parseRoleAssignments(properties.get("roleAssignments"));
         log.info("Thresholds: packetIn={}/s flowMod={}/s newHosts={}/s for {}s, maxFlows={}",
                  packetInThreshold, flowModThreshold, newHostThreshold, sustainedSeconds,
@@ -292,10 +294,18 @@ public class NetworkMonitorComponent implements MonitorService {
 
                 long differenceInPackets = sumPacketsReceived.orElse(0L) - sumPacketsSent.orElse(0L);
                 differenceInPackets = Math.abs(differenceInPackets);
-                if (differenceInPackets > maxPacketDifference) {
-                    deviceAdmin.isolate(k);
-                } else {
-                    log.debug("Not isolating {} as packet difference {} was less than or equal to {}", k, differenceInPackets, maxPacketDifference);
+                try {
+                    if (differenceInPackets > maxPacketDifference) {
+                        log.info("Isolating {} as packet difference {} was greater than {}", k, differenceInPackets, maxPacketDifference);
+                        deviceAdmin.isolate(k);
+                    } else if (sumPacketsReceivedDropped.orElse(0L) + sumPacketsSentDropped.orElse(0L) > maxPacketDifference) {
+                        log.info("Isolating {} as packets dropped {} was greater than {}", k, sumPacketsReceivedDropped.orElse(0L) + sumPacketsSentDropped.orElse(0L), maxPacketDifference);
+                        deviceAdmin.isolate(k);
+                    } else {
+                        log.debug("Not isolating {} as packet difference {} was less than or equal to {}", k, differenceInPackets, maxPacketDifference);
+                    }
+                } catch (Exception e) {
+                    log.error("Error isolating device {}", k, e);
                 }
             });
         }

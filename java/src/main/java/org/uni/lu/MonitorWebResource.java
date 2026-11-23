@@ -226,6 +226,54 @@ public class MonitorWebResource extends AbstractWebResource {
         }
     }
 
+    @POST
+    @Path("switch/isolate")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response isolateSwitch(InputStream body) {
+        require(Role.ADMIN);
+        try {
+            JsonNode in = mapper().readTree(body);
+            if (in == null || !in.hasNonNull("device")) {
+                return badRequest("missing 'device'");
+            }
+            DeviceId device = DeviceId.deviceId(in.get("device").asText());
+            get(DeviceAdmin.class).isolate(device);
+
+            log.info("RBAC OK user={} isolate switch {})",
+                    caller(), device);
+            return ok(mapper().createObjectNode()
+                    .put("device", device.toString())
+                    .put("isolated", true)).build();
+        } catch (IllegalArgumentException | IOException | ServiceException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
+    @POST
+    @Path("switch/reinstate")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response reinstateSwitch(InputStream body) {
+        require(Role.ADMIN);
+        try {
+            JsonNode in = mapper().readTree(body);
+            if (in == null || !in.hasNonNull("device")) {
+                return badRequest("missing 'device'");
+            }
+            DeviceId device = DeviceId.deviceId(in.get("device").asText());
+            get(DeviceAdmin.class).reinstate(device);
+
+            log.info("RBAC OK user={} reinstate switch {})",
+                    caller(), device);
+            return ok(mapper().createObjectNode()
+                    .put("device", device.toString())
+                    .put("reinstated", true)).build();
+        } catch (IllegalArgumentException | IOException | ServiceException e) {
+            return badRequest(e.getMessage());
+        }
+    }
+
     @GET
     @Path("macAddresses")
     @Produces(MediaType.APPLICATION_JSON)

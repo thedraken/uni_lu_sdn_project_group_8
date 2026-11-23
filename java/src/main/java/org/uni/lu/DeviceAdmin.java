@@ -35,7 +35,7 @@ public class DeviceAdmin {
      * Isolates the device on the network, uses the device ID to locate connections to the switches and "removes" them
      * @param deviceId The device ID to isolate
      */
-    public void isolate(DeviceId deviceId) {
+    public void isolate(DeviceId deviceId) throws ServiceException {
         Set<ConnectPoint> closedPorts = new HashSet<>();
         try {
             linkService.getDeviceIngressLinks(deviceId).forEach(link -> {
@@ -58,6 +58,7 @@ public class DeviceAdmin {
             } catch (Exception innerE) {
                 log.error("Error trying to re-open the ports after failed closing for device {}", deviceId, innerE);
             }
+            throw new ServiceException("Error trying to isolate switch " + deviceId, e);
         }
     }
 
@@ -65,7 +66,7 @@ public class DeviceAdmin {
      * Reinstates the switch to the network by re-opening the connecting ports
      * @param deviceId The device ID to re-enable, if none is found, no ports are re-opened
      */
-    public void reinstate(DeviceId deviceId) {
+    public void reinstate(DeviceId deviceId) throws ServiceException {
         Set<ConnectPoint> connectPointsToReEnable = null;
         try {
             connectPointsToReEnable = isolatedSwitches.remove(deviceId);
@@ -89,6 +90,7 @@ public class DeviceAdmin {
                     }
                 });
             }
+            throw new ServiceException("Error trying to reinstate switch " + deviceId, e);
         }
     }
 }
