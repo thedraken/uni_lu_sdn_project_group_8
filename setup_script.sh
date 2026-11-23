@@ -54,12 +54,34 @@ docker cp onos_group_8-1.0-SNAPSHOT.oar onos:/root/monitor.oar
 echo "Install ONOS monitor"
 docker exec onos /root/onos/bin/onos-app localhost install! /root/monitor.oar
 
+#Waiting for service to be up, so we can change parameters
+sleep 10
+
+#Use bash arguments to turn on auto isolate a switch, if it breaks
+# the threshold count for number of packets sent vs received
+AUTO_ISOLATE=${AUTO_ISOLATE:-true}
+echo "Set autoIsolate=$AUTO_ISOLATE"
+AUTO_ISOLATE_SET=false
+HTTP_CODE=$(docker exec onos curl -s -o /dev/null -w "%{http_code}" -u onos:rocks \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"autoIsolate\": \"$AUTO_ISOLATE\"}" \
+  http://localhost:8181/onos/v1/configuration/org.uni.lu.NetworkMonitorComponent 2>/dev/null)
+if [ "$HTTP_CODE" = "200" ]; then
+    AUTO_ISOLATE_SET=true
+    break
+fi
+
+done
+if [ "$AUTO_ISOLATE_SET" != "true" ]; then
+    echo "WARNING: could not set autoIsolate, the monitor keeps its default (false)" >&2
+fi
+
 mkdir -p pcap
 MONITOR_LOG="output/onos_monitor.log"
 mkdir -p output
 echo "Write ONOS monitor details to $MONITOR_LOG"
 docker exec onos sh -c 'echo $$ > /tmp/monitor_tail.pid; exec tail -n 0 -F /root/onos/apache-karaf-*/data/log/karaf.log' \
-  | grep --line-buffered -E "ANOMALY|RECOVERED|SUMMARY|LINK_|DEVICE_" > "$MONITOR_LOG" &
+  | grep --line-buffered -E "ANOMALY|RECOVERED|SUMMARY|LINK_|DEVICE_|Isolated|isolated|reinstated" > "$MONITOR_LOG" &
 
 
 TEMP_PCAP="/tmp/sdn_capture.pcap"

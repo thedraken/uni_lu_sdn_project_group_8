@@ -1,7 +1,9 @@
-from mininet.log import info
+from attacks.common import apply_loss, log_event
 
-
+"""
+Complete dropping: every transit packet through the switch is discarded.
+"""
 def do_attack(net, target: str):
     switch = net.get(target)
-    info(f"Doing blackhole attack on {switch.name}\n")
-    #TODO install the drop on the switch's transit interfaces
+    apply_loss(switch, 100)
+    log_event(f"ATTACK_START blackhole {switch.name} loss=100")

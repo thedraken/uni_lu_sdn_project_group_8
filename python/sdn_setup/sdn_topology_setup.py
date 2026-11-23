@@ -12,7 +12,8 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
                           connect_all_hosts_to_all_switches:bool=False,
                           topology_type:str="mesh",
-                          start_cli:bool=True):
+                          start_cli: bool = True,
+                          host_switches: list[str] | None = None):
     global __net__
     __net__ = Mininet(switch=OVSSwitch, build=False)
     try:
@@ -58,8 +59,19 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
                 for h in hosts:
                     __net__.addLink(h, s)
         else:
+            # Hosts only on the named switches, so the others carry transit traffic only
+            # and can be isolated without cutting any host off
+            edge_switches = switches
+            if host_switches:
+                by_name = {s.name: s for s in switches}
+                unknown = [name for name in host_switches if
+                           name not in by_name]
+                if unknown:
+                    raise ValueError(
+                        f"Unknown switch(es) in host_switches: {unknown}")
+                edge_switches = [by_name[name] for name in host_switches]
             for i, h in enumerate(hosts):
-                __net__.addLink(h, switches[i % len(switches)])
+                __net__.addLink(h, edge_switches[i % len(edge_switches)])
 
         info("Build the network and start the devices")
         __net__.build()
@@ -104,7 +116,8 @@ def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                           number_of_switches:int=3,
                           connect_all_hosts_to_all_switches:bool=False,
                             topology_type:str="mesh",
-                            start_cli:bool=True):
+                    start_cli: bool = True,
+                    host_switches: list[str] | None = None):
     setLogLevel('debug')
     #Returns the running network when start_cli is False; call stop_topology() when done
     return _create_sdn_topology_(do_tests,
@@ -112,7 +125,8 @@ def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                                  number_of_switches,
                                  connect_all_hosts_to_all_switches,
                                  topology_type,
-                                 start_cli)
+                                 start_cli,
+                                 host_switches)
 
 
 # noinspection unreachable-code
