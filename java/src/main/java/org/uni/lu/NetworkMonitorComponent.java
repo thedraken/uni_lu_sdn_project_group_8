@@ -78,6 +78,9 @@ public class NetworkMonitorComponent implements MonitorService {
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected MeterService meterService;
 
+    @Reference(cardinality = ReferenceCardinality.MANDATORY)
+    protected DeviceAdmin deviceAdmin;
+
     private int packetInThreshold = 100;
     private int flowModThreshold = 100;
     private int newHostThreshold = 10;
@@ -109,6 +112,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
     private int packetCheckInterval = 60;
+    private int maxPacketDifference = 5;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
@@ -266,12 +270,34 @@ public class NetworkMonitorComponent implements MonitorService {
         Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>();
         for (DeviceId deviceId : devicePacketMonitorMap.keySet()) {
             List<PacketDetail> details = devicePacketMonitorMap.remove(deviceId);
-            if (details != null) {
+            if (details != null && details.size() > 4) {
                 devicePacketMap.put(deviceId, details);
+            } else if (details != null) {
+                log.debug("Merging data back into map to be checked later, as less than 5 items");
+                devicePacketMonitorMap.merge(deviceId, List.copyOf(details),
+                        (existing, added) -> {
+                            List<PacketDetail> combined = new ArrayList<>(existing);
+                            combined.addAll(added);
+                            return List.copyOf(combined);
+                        });
+                devicePacketMap.clear();
             }
         }
         if (!devicePacketMap.isEmpty()) {
-            //TODO handle if the packetDetail map has too many dropped connections
+            devicePacketMap.forEach((k,v) -> {
+                Optional<Long> sumPacketsReceived = v.stream().map(PacketDetail::getPacketsReceived).reduce(Long::sum);
+                Optional<Long> sumPacketsSent = v.stream().map(PacketDetail::getPacketsSent).reduce(Long::sum);
+                Optional<Long> sumPacketsReceivedDropped = v.stream().map(PacketDetail::getPacketsReceivedDropped).reduce(Long::sum);
+                Optional<Long> sumPacketsSentDropped = v.stream().map(PacketDetail::getPacketsSentDropped).reduce(Long::sum);
+
+                long differenceInPackets = sumPacketsReceived.orElse(0L) - sumPacketsSent.orElse(0L);
+                differenceInPackets = Math.abs(differenceInPackets);
+                if (differenceInPackets > maxPacketDifference) {
+                    deviceAdmin.isolate(k);
+                } else {
+                    log.debug("Not isolating {} as packet difference {} was less than or equal to {}", k, differenceInPackets, maxPacketDifference);
+                }
+            });
         }
     }
 

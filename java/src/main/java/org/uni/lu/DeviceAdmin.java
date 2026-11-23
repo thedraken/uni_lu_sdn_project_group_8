@@ -36,7 +36,6 @@ public class DeviceAdmin {
      * @param deviceId The device ID to isolate
      */
     public void isolate(DeviceId deviceId) {
-        //Connect points to close, set needs building
         Set<ConnectPoint> closedPorts = new HashSet<>();
         try {
             linkService.getDeviceIngressLinks(deviceId).forEach(link -> {
