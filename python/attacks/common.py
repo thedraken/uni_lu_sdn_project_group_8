@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from mininet.log import info
 from mininet.node import Switch
@@ -19,7 +19,8 @@ def log_event(message: str):
     """
     Logs the event during the attacks
     """
-    line = f"{datetime.now().isoformat(timespec='milliseconds')} {message}"
+    # UTC, so it lines up with the ONOS log and the VM clock
+    line = f"{datetime.now(timezone.utc).isoformat(timespec='milliseconds')} {message}"
     info(line + "\n")
     with open(ATTACK_LOG, "a") as f:
         f.write(line + "\n")

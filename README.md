@@ -168,7 +168,7 @@ mininet> exit
 ```
 
 The setup script stops packet capture and saves the generated files. Each run gets its own
-timestamped directory, `output/<YYYY-MM-DD_HH-MM-SS>/`, so earlier runs are never overwritten:
+UTC timestamped directory, `output/<YYYY-MM-DD_HH-MM-SS>/`, so earlier runs are never overwritten:
 
 - `output/<timestamp>/sdn_capture.pcap` — network traffic capture
 - `output/<timestamp>/onos_monitor.log` — ONOS monitoring log, including `ANOMALY DROP` alerts and switch isolation

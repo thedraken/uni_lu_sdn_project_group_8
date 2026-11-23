@@ -8,6 +8,7 @@ docker rm -f onos 2>/dev/null || true
 docker run -d \
   --name onos \
   --net onos-net \
+  -e TZ=UTC \
   -p 6653:6653 \
   -p 8181:8181 \
   -p 8101:8101 \
@@ -73,8 +74,8 @@ if [ "$AUTO_ISOLATE_SET" != "true" ]; then
     echo "WARNING: could not set autoIsolate, the monitor keeps its default (false)" >&2
 fi
 
-#Each run gets its own timestamped directory, so runs never overwrite each other
-RUN_DIR="output/$(date +%Y-%m-%d_%H-%M-%S)"
+#Each run gets its own UTC timestamped directory, so runs never overwrite each other
+RUN_DIR="output/$(date -u +%Y-%m-%d_%H-%M-%S)"
 mkdir -p "$RUN_DIR"
 echo "Run output directory: $RUN_DIR"
 MONITOR_LOG="$RUN_DIR/onos_monitor.log"

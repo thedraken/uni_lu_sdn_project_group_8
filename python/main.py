@@ -2,7 +2,7 @@
 import argparse
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from mininet.cli import CLI
 from mininet.log import info
@@ -52,7 +52,10 @@ def run_attack(net, args):
     time.sleep(args.pre_attack)
 
     try:
-        start_attack(net, args)
+        if args.baseline:
+            log_event("BASELINE_START no attack")
+        else:
+            start_attack(net, args)
         if args.cli:
             info(
                 "Attack running, opening the CLI; exit it to stop the attack\n")
@@ -61,7 +64,10 @@ def run_attack(net, args):
             time.sleep(args.duration)
     finally:
         # Always revert the attack, even after Ctrl-C or an error
-        stop_attack(net, args)
+        if args.baseline:
+            log_event("BASELINE_STOP")
+        else:
+            stop_attack(net, args)
 
     if not args.cli:
         # Watch the network recover after the attack ends
@@ -83,6 +89,8 @@ if __name__ == "__main__":
                                  "the others only carry transit traffic. Default: every switch")
     arg_parser.add_argument("--attack", type=str,
                             choices=["greyhole", "blackhole", "random"])
+    arg_parser.add_argument("--baseline", action="store_true",
+                            help="Run the same timed ping sequence as an attack run, without any attack")
     arg_parser.add_argument("--target", type=str, default="s1",
                             help="Name of the switch to compromise, e.g. s1")
     arg_parser.add_argument("--loss", type=int, default=50,
@@ -104,11 +112,13 @@ if __name__ == "__main__":
     arg_parser.add_argument("--cli", action="store_true",
                             help="With --attack: open the Mininet CLI during the attack instead of waiting --duration")
     arg_parser.add_argument("--output_dir", type=str, default=None,
-                            help="Directory for this run's logs. Default: output/<timestamp>")
+                            help="Directory for this run's logs. Default: output/<UTC timestamp>")
 
     #parse_args() reads sys.argv[1:] itself; passing sys.argv would include the script name
     args = arg_parser.parse_args()
 
+    if args.baseline and args.attack:
+        arg_parser.error("--baseline cannot be combined with --attack")
     if not 0 <= args.loss <= 100:
         arg_parser.error("--loss must be between 0 and 100")
     host_switches = args.host_switches.split(
@@ -116,13 +126,15 @@ if __name__ == "__main__":
 
     if args.output_dir is None:
         args.output_dir = os.path.join(
-            OUTPUT_ROOT, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+            OUTPUT_ROOT,
+            datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S"))
     os.makedirs(args.output_dir, exist_ok=True)
     attacks.common.set_output_dir(args.output_dir)
     info(f"Writing run logs to {args.output_dir}\n")
 
-    #With an attack the run is scripted, so skip the CLI and stop the network ourselves
-    start_cli = not args.attack
+    # With an attack or baseline the run is scripted, so skip the CLI and stop the network ourselves
+    scripted_run = args.attack or args.baseline
+    start_cli = not scripted_run
 
     net = sdn_setup_cur.create_topology(do_tests=args.do_tests,
                                         number_of_hosts=args.hosts,
@@ -132,7 +144,7 @@ if __name__ == "__main__":
                                         start_cli=start_cli,
                                         host_switches=host_switches)
 
-    if args.attack:
+    if scripted_run:
         try:
             run_attack(net, args)
         finally:
