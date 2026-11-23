@@ -167,11 +167,12 @@ To finish:
 mininet> exit
 ```
 
-The setup script stops packet capture and saves the generated files:
+The setup script stops packet capture and saves the generated files. Each run gets its own
+timestamped directory, `output/<YYYY-MM-DD_HH-MM-SS>/`, so earlier runs are never overwritten:
 
-- `pcap/sdn_capture.pcap` — network traffic capture
-- `output/onos_monitor.log` — ONOS monitoring log, including `ANOMALY DROP` alerts and switch isolation
-- `output/attack.log` — timestamped start, change and stop of each attack (attack runs only)
-- `output/ping.log` — timestamped continuous ping between the two test hosts (attack runs only)
+- `output/<timestamp>/sdn_capture.pcap` — network traffic capture
+- `output/<timestamp>/onos_monitor.log` — ONOS monitoring log, including `ANOMALY DROP` alerts and switch isolation
+- `output/<timestamp>/attack.log` — timestamped start, change and stop of each attack (attack runs only)
+- `output/<timestamp>/ping.log` — timestamped continuous ping between the two test hosts (attack runs only)
 
 **Note:** PCAP files may become large during extended experiments. Ensure sufficient disk space is available.

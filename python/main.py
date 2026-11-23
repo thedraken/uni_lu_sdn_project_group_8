@@ -2,6 +2,7 @@
 import argparse
 import os
 import time
+from datetime import datetime
 
 from mininet.cli import CLI
 from mininet.log import info
@@ -13,8 +14,7 @@ import attacks.random_drop
 import sdn_setup.sdn_topology_setup as sdn_setup_cur
 from attacks.common import log_event
 
-OUTPUT_DIR = "output"
-PING_LOG = os.path.join(OUTPUT_DIR, "ping.log")
+OUTPUT_ROOT = "output"
 
 
 def start_attack(net, args):
@@ -44,9 +44,10 @@ def run_attack(net, args):
 
     # -D prints a Unix timestamp on every reply, -O reports missed replies,
     # so loss and recovery can be lined up with the ONOS log
-    info(f"Continuous ping {src.name} -> {dst.name}, written to {PING_LOG}\n")
+    ping_log = os.path.join(args.output_dir, "ping.log")
+    info(f"Continuous ping {src.name} -> {dst.name}, written to {ping_log}\n")
     src.cmd(
-        f"ping -D -O -i 0.2 {dst.IP()} > {os.path.abspath(PING_LOG)} 2>&1 &")
+        f"ping -D -O -i 0.2 {dst.IP()} > {os.path.abspath(ping_log)} 2>&1 &")
     log_event(f"PING_START {src.name} {src.IP()} -> {dst.name} {dst.IP()}")
     time.sleep(args.pre_attack)
 
@@ -102,6 +103,8 @@ if __name__ == "__main__":
                             help="Seconds of traffic after the attack stops")
     arg_parser.add_argument("--cli", action="store_true",
                             help="With --attack: open the Mininet CLI during the attack instead of waiting --duration")
+    arg_parser.add_argument("--output_dir", type=str, default=None,
+                            help="Directory for this run's logs. Default: output/<timestamp>")
 
     #parse_args() reads sys.argv[1:] itself; passing sys.argv would include the script name
     args = arg_parser.parse_args()
@@ -111,7 +114,12 @@ if __name__ == "__main__":
     host_switches = args.host_switches.split(
         ",") if args.host_switches else None
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    if args.output_dir is None:
+        args.output_dir = os.path.join(
+            OUTPUT_ROOT, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    os.makedirs(args.output_dir, exist_ok=True)
+    attacks.common.set_output_dir(args.output_dir)
+    info(f"Writing run logs to {args.output_dir}\n")
 
     #With an attack the run is scripted, so skip the CLI and stop the network ourselves
     start_cli = not args.attack

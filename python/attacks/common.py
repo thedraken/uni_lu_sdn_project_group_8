@@ -1,9 +1,18 @@
+import os
 from datetime import datetime
 
 from mininet.log import info
 from mininet.node import Switch
 
-ATTACK_LOG = "output/attack.log"
+ATTACK_LOG = os.path.join("output", "attack.log")
+
+
+def set_output_dir(output_dir: str):
+    """
+    Write the attack log into this run's output directory
+    """
+    global ATTACK_LOG
+    ATTACK_LOG = os.path.join(output_dir, "attack.log")
 
 
 def log_event(message: str):

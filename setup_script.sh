@@ -68,17 +68,16 @@ HTTP_CODE=$(docker exec onos curl -s -o /dev/null -w "%{http_code}" -u onos:rock
   http://localhost:8181/onos/v1/configuration/org.uni.lu.NetworkMonitorComponent 2>/dev/null)
 if [ "$HTTP_CODE" = "200" ]; then
     AUTO_ISOLATE_SET=true
-    break
 fi
-
-done
 if [ "$AUTO_ISOLATE_SET" != "true" ]; then
     echo "WARNING: could not set autoIsolate, the monitor keeps its default (false)" >&2
 fi
 
-mkdir -p pcap
-MONITOR_LOG="output/onos_monitor.log"
-mkdir -p output
+#Each run gets its own timestamped directory, so runs never overwrite each other
+RUN_DIR="output/$(date +%Y-%m-%d_%H-%M-%S)"
+mkdir -p "$RUN_DIR"
+echo "Run output directory: $RUN_DIR"
+MONITOR_LOG="$RUN_DIR/onos_monitor.log"
 echo "Write ONOS monitor details to $MONITOR_LOG"
 docker exec onos sh -c 'echo $$ > /tmp/monitor_tail.pid; exec tail -n 0 -F /root/onos/apache-karaf-*/data/log/karaf.log' \
   | grep --line-buffered -E "ANOMALY|RECOVERED|SUMMARY|LINK_|DEVICE_|Isolated|isolated|reinstated" > "$MONITOR_LOG" &
@@ -107,7 +106,7 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
   uv sync
   #Start the script
   # Can pass attack value into script
-  sudo .venv/bin/python main.py "$@"
+  sudo .venv/bin/python main.py --output_dir "$RUN_DIR" "$@"
 
   echo "Sleeping for 5, make sure tshark has finished"
   sleep 5
@@ -121,15 +120,15 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
 
   echo "Move the capture to its destination"
   if [ -f "$TEMP_PCAP" ]; then
-    if sudo mv "$TEMP_PCAP" pcap/; then
-      echo "Capture complete: pcap/$(basename "$TEMP_PCAP")"
+    if sudo mv "$TEMP_PCAP" "$RUN_DIR/"; then
+      echo "Capture complete: $RUN_DIR/$(basename "$TEMP_PCAP")"
     else
       echo "ERROR: Failed to move PCAP file." >&2
     fi
   else
     echo "WARNING: PCAP file was not created." >&2
   fi
-  ls -lh pcap/
+  ls -lh "$RUN_DIR"/
 else
   echo "tshark failed to start!"
   cat /tmp/tshark_debug.log
@@ -141,4 +140,4 @@ docker exec onos sh -c 'if [ -f /tmp/monitor_tail.pid ]; then
   kill "$(cat /tmp/monitor_tail.pid)" 2>/dev/null || true
   rm -f /tmp/monitor_tail.pid
 fi' 2>/dev/null || true
-echo "ONOS monitor log: $MONITOR_LOG"
+echo "Run output saved in: $RUN_DIR"
