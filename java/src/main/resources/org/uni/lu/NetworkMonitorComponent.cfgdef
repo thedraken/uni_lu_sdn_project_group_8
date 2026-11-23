@@ -7,3 +7,7 @@ summaryInterval|INTEGER|10|Seconds between SUMMARY log lines
 roleAssignments|STRING|alice:admin,bob:operator,charlie:observer,onos:admin|RBAC role per user, as user:role pairs separated by commas
 rateLimitKbps|INTEGER|1000|Rate limit in kbit/s applied when mitigating
 autoMitigate|BOOLEAN|false|Automatically rate-limit a device that raises an anomaly
+packetCheckInterval|INTEGER|60|How often, in seconds, the packet limits should be checked for drop packets
+minimumReceivedPacketsToCheck|INTEGER|5|Minimum number of packets the device needs to have received to be checked for any dropped packets
+lossThresholdPackets|DOUBLE|50|The amount of packets to differ between sent and received before it can be announced as faulty
+autoIsolate|BOOLEAN|false|If the loss threshold is exceeded, should the switch be auto isolated?

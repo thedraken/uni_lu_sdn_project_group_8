@@ -134,7 +134,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private long secondsSincePacketCheck = 0;
 
     private ScheduledExecutorService executor;
-    private boolean autoIsolate = true;
+    private boolean autoIsolate = false;
     private volatile Instant quietUntil = Instant.EPOCH;
 
     @Activate
