@@ -116,7 +116,7 @@ public class NetworkMonitorComponent implements MonitorService {
     private int packetCheckInterval = 60;
     private int minimumReceivedPacketsToCheck = 5;
     //50% threshold difference
-    private double lossThresholdPackets = 50.0;
+    private double lossThresholdPackets = 20.0;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
