@@ -107,7 +107,12 @@ def create_topology(do_tests:bool=False, number_of_hosts:int=7,
                             start_cli:bool=True):
     setLogLevel('debug')
     #Returns the running network when start_cli is False; call stop_topology() when done
-    return _create_sdn_topology_(do_tests, number_of_hosts, number_of_switches, connect_all_hosts_to_all_switches, topology_type, start_cli)
+    return _create_sdn_topology_(do_tests,
+                                 number_of_hosts,
+                                 number_of_switches,
+                                 connect_all_hosts_to_all_switches,
+                                 topology_type,
+                                 start_cli)
 
 
 # noinspection unreachable-code

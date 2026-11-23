@@ -20,7 +20,6 @@ if __name__ == "__main__":
                             help="Greyhole only: percentage of transit packets to drop (0-100)")
     arg_parser.add_argument("--topology_type", type=str, choices=["mesh", "ring", "linear"], default="mesh")
 
-    #parse_args() reads sys.argv[1:] itself; passing sys.argv would include the script name
     args = arg_parser.parse_args()
 
     if not 0 <= args.loss <= 100:
@@ -44,5 +43,4 @@ if __name__ == "__main__":
             elif args.attack == "blackhole":
                 attacks.blackhole.do_attack(net, args.target)
         finally:
-            #Always stop the network, even if the attack fails part-way
             sdn_setup_cur.stop_topology()
