@@ -4,9 +4,12 @@ import java.util.Dictionary;
 import java.util.HashMap;
 import java.util.Map;
 
-public class PropertyParser {
+public final class PropertyParser {
 
-    public static boolean boolProperty(Dictionary<?, ?> properties, @SuppressWarnings("SameParameterValue") String name, boolean current) {
+    private PropertyParser() {
+    }
+
+    public static boolean boolProperty(Dictionary<?, ?> properties, String name, boolean current) {
         Object value = properties.get(name);
         if (value == null) {
             return current;

@@ -28,7 +28,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.uni.lu.domain.PacketDetail;
 
-import javax.annotation.Nonnull;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -113,8 +112,8 @@ public class NetworkMonitorComponent implements MonitorService {
     private final Map<DeviceId, AtomicLong> flowAdds = new ConcurrentHashMap<>();
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
-    private int packetCheckInterval = 60;
-    private int minimumReceivedPacketsToCheck = 5;
+    private int packetCheckInterval = 10;
+    private int minimumReceivedPacketsToCheck = 50;
     //50% threshold difference
     private double lossThresholdPackets = 20.0;
 
@@ -237,7 +236,6 @@ public class NetworkMonitorComponent implements MonitorService {
     }
 
     private void checkPacketAnomalies() {
-        Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>();
         for (DeviceId deviceId : devicePacketMonitorMap.keySet()) {
             List<PacketDetail> details = devicePacketMonitorMap.remove(deviceId);
             if (details == null || deviceAdmin.isIsolated(deviceId) || Instant.now().isBefore(quietUntil)) {
@@ -254,11 +252,9 @@ public class NetworkMonitorComponent implements MonitorService {
 
             double lostPackets = 100.0 * (sumOfReceivedPackets - sumOfSentPackets) / sumOfReceivedPackets;
             if (lostPackets > lossThresholdPackets) {
-                log.info("Isolating {} as packet difference {}% was greater than {}%", deviceId,
-                        String.format("%.1f", lostPackets), String.format("%.1f", lossThresholdPackets));
                 raiseDropAlert(deviceId, sumOfReceivedPackets, sumOfSentPackets, lostPackets);
             } else {
-                log.debug("{} loss {}% within threshold", deviceId, String.format("%.1f", lossThresholdPackets));
+                log.debug("{} loss {}% within threshold {}", deviceId, String.format("%.1f", lostPackets), String.format("%.1f", lossThresholdPackets));
             }
         }
     }
@@ -271,6 +267,8 @@ public class NetworkMonitorComponent implements MonitorService {
         if (!autoIsolate) {
             return;
         }
+        log.info("Isolating {} as packet difference {}% was greater than {}%", deviceId,
+                String.format("%.1f", lossPct), String.format("%.1f", lossThresholdPackets));
         try {
             deviceAdmin.isolate(deviceId);
             quietUntil = Instant.now().plusSeconds(10);
@@ -282,8 +280,7 @@ public class NetworkMonitorComponent implements MonitorService {
         }
     }
 
-    @Nonnull
-    private static BiFunction<List<PacketDetail>, List<PacketDetail>, List<PacketDetail>> mergePacketDetailsBackIntoMap() {
+    private BiFunction<List<PacketDetail>, List<PacketDetail>, List<PacketDetail>> mergePacketDetailsBackIntoMap() {
         return (existing, added) -> {
             List<PacketDetail> combined = new ArrayList<>(existing);
             combined.addAll(added);
