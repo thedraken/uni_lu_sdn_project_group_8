@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.uni.lu.domain.PacketDetail;
 
+import javax.annotation.Nonnull;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
 
 @SuppressWarnings("unused")
 @Component(immediate = true,
@@ -112,7 +114,9 @@ public class NetworkMonitorComponent implements MonitorService {
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
     private int packetCheckInterval = 60;
-    private int maxPacketDifference = 5;
+    private int minimumReceivedPacketsToCheck = 5;
+    //50% threshold difference
+    private double lossThresholdPackets = 50.0;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
@@ -130,6 +134,8 @@ public class NetworkMonitorComponent implements MonitorService {
     private long secondsSincePacketCheck = 0;
 
     private ScheduledExecutorService executor;
+    private boolean autoIsolate = true;
+    private volatile Instant quietUntil = Instant.EPOCH;
 
     @Activate
     protected void activate(ComponentContext context) {
@@ -176,17 +182,19 @@ public class NetworkMonitorComponent implements MonitorService {
             return;
         }
         Dictionary<?, ?> properties = context.getProperties();
-        packetInThreshold = intProperty(properties, "packetInThreshold", packetInThreshold);
-        flowModThreshold = intProperty(properties, "flowModThreshold", flowModThreshold);
-        newHostThreshold = intProperty(properties, "newHostThreshold", newHostThreshold);
-        sustainedSeconds = intProperty(properties, "sustainedSeconds", sustainedSeconds);
-        maxFlowsPerDevice = intProperty(properties, "maxFlowsPerDevice", maxFlowsPerDevice);
-        summaryInterval = intProperty(properties, "summaryInterval", summaryInterval);
-        rateLimitKbps = intProperty(properties, "rateLimitKbps", rateLimitKbps);
-        autoMitigate = boolProperty(properties, "autoMitigate", autoMitigate);
-        packetCheckInterval = intProperty(properties, "packetCheckInterval", packetCheckInterval);
-        maxPacketDifference = intProperty(properties, "maxPacketDifference", maxPacketDifference);
-        roleAssignments = parseRoleAssignments(properties.get("roleAssignments"));
+        packetInThreshold = PropertyParser.intProperty(properties, "packetInThreshold", packetInThreshold);
+        flowModThreshold = PropertyParser.intProperty(properties, "flowModThreshold", flowModThreshold);
+        newHostThreshold = PropertyParser.intProperty(properties, "newHostThreshold", newHostThreshold);
+        sustainedSeconds = PropertyParser.intProperty(properties, "sustainedSeconds", sustainedSeconds);
+        maxFlowsPerDevice = PropertyParser.intProperty(properties, "maxFlowsPerDevice", maxFlowsPerDevice);
+        summaryInterval = PropertyParser.intProperty(properties, "summaryInterval", summaryInterval);
+        rateLimitKbps = PropertyParser.intProperty(properties, "rateLimitKbps", rateLimitKbps);
+        autoMitigate = PropertyParser.boolProperty(properties, "autoMitigate", autoMitigate);
+        packetCheckInterval = PropertyParser.intProperty(properties, "packetCheckInterval", packetCheckInterval);
+        minimumReceivedPacketsToCheck = PropertyParser.intProperty(properties, "minimumReceivedPacketsToCheck", minimumReceivedPacketsToCheck);
+        lossThresholdPackets = PropertyParser.doubleProperty(properties, "lossThresholdPackets", lossThresholdPackets);
+        autoIsolate = PropertyParser.boolProperty(properties, "autoIsolate", autoIsolate);
+        roleAssignments = PropertyParser.parseRoleAssignments(properties.get("roleAssignments"));
         log.info("Thresholds: packetIn={}/s flowMod={}/s newHosts={}/s for {}s, maxFlows={}",
                  packetInThreshold, flowModThreshold, newHostThreshold, sustainedSeconds,
                  maxFlowsPerDevice);
@@ -194,47 +202,7 @@ public class NetworkMonitorComponent implements MonitorService {
         log.info("RBAC role assignments: {}", roleAssignments);
     }
 
-    private static boolean boolProperty(Dictionary<?, ?> properties, @SuppressWarnings("SameParameterValue") String name, boolean current) {
-        Object value = properties.get(name);
-        if (value == null) {
-            return current;
-        }
-        return Boolean.parseBoolean(value.toString().trim());
-    }
 
-    private static Map<String, Role> parseRoleAssignments(Object raw) {
-        //Accepts "user:role,user:role,...". DS may hand us the commas already
-        //split into a String[], so cope with both that and a plain String.
-        Map<String, Role> map = new HashMap<>();
-        if (raw == null) {
-            return map;
-        }
-        String[] pairs = (raw instanceof String[])
-                ? (String[]) raw
-                : raw.toString().split(",");
-        for (String pair : pairs) {
-            String[] kv = pair.split(":");
-            if (kv.length == 2) {
-                Role role = Role.fromName(kv[1]);
-                if (role != null) {
-                    map.put(kv[0].trim(), role);
-                }
-            }
-        }
-        return map;
-    }
-
-    private static int intProperty(Dictionary<?, ?> properties, String name, int current) {
-        Object value = properties.get(name);
-        if (value == null) {
-            return current;
-        }
-        try {
-            return Integer.parseInt(value.toString().trim());
-        } catch (NumberFormatException e) {
-            return current;
-        }
-    }
 
     private void everySecond() {
         try {
@@ -272,43 +240,55 @@ public class NetworkMonitorComponent implements MonitorService {
         Map<DeviceId, List<PacketDetail>> devicePacketMap = new HashMap<>();
         for (DeviceId deviceId : devicePacketMonitorMap.keySet()) {
             List<PacketDetail> details = devicePacketMonitorMap.remove(deviceId);
-            if (details != null && details.size() > 4) {
-                devicePacketMap.put(deviceId, details);
-            } else if (details != null) {
-                log.debug("Merging data back into map to be checked later, as less than 5 items");
+            if (details == null || deviceAdmin.isIsolated(deviceId) || Instant.now().isBefore(quietUntil)) {
+                continue;
+            }
+            long sumOfReceivedPackets = details.stream().mapToLong(PacketDetail::getPacketsReceived).sum();
+            long sumOfSentPackets = details.stream().mapToLong(PacketDetail::getPacketsSent).sum();
+
+            if (sumOfReceivedPackets < minimumReceivedPacketsToCheck) {
                 devicePacketMonitorMap.merge(deviceId, List.copyOf(details),
-                        (existing, added) -> {
-                            List<PacketDetail> combined = new ArrayList<>(existing);
-                            combined.addAll(added);
-                            return List.copyOf(combined);
-                        });
-                devicePacketMap.clear();
+                        mergePacketDetailsBackIntoMap());
+                continue;
+            }
+
+            double lostPackets = 100.0 * (sumOfReceivedPackets - sumOfSentPackets) / sumOfReceivedPackets;
+            if (lostPackets > lossThresholdPackets) {
+                log.info("Isolating {} as packet difference {}% was greater than {}%", deviceId,
+                        String.format("%.1f", lostPackets), String.format("%.1f", lossThresholdPackets));
+                raiseDropAlert(deviceId, sumOfReceivedPackets, sumOfSentPackets, lostPackets);
+            } else {
+                log.debug("{} loss {}% within threshold", deviceId, String.format("%.1f", lossThresholdPackets));
             }
         }
-        if (!devicePacketMap.isEmpty()) {
-            devicePacketMap.forEach((k,v) -> {
-                Optional<Long> sumPacketsReceived = v.stream().map(PacketDetail::getPacketsReceived).reduce(Long::sum);
-                Optional<Long> sumPacketsSent = v.stream().map(PacketDetail::getPacketsSent).reduce(Long::sum);
-                Optional<Long> sumPacketsReceivedDropped = v.stream().map(PacketDetail::getPacketsReceivedDropped).reduce(Long::sum);
-                Optional<Long> sumPacketsSentDropped = v.stream().map(PacketDetail::getPacketsSentDropped).reduce(Long::sum);
+    }
 
-                long differenceInPackets = sumPacketsReceived.orElse(0L) - sumPacketsSent.orElse(0L);
-                differenceInPackets = Math.abs(differenceInPackets);
-                try {
-                    if (differenceInPackets > maxPacketDifference) {
-                        log.info("Isolating {} as packet difference {} was greater than {}", k, differenceInPackets, maxPacketDifference);
-                        deviceAdmin.isolate(k);
-                    } else if (sumPacketsReceivedDropped.orElse(0L) + sumPacketsSentDropped.orElse(0L) > maxPacketDifference) {
-                        log.info("Isolating {} as packets dropped {} was greater than {}", k, sumPacketsReceivedDropped.orElse(0L) + sumPacketsSentDropped.orElse(0L), maxPacketDifference);
-                        deviceAdmin.isolate(k);
-                    } else {
-                        log.debug("Not isolating {} as packet difference {} was less than or equal to {}", k, differenceInPackets, maxPacketDifference);
-                    }
-                } catch (Exception e) {
-                    log.error("Error isolating device {}", k, e);
-                }
-            });
+    private void raiseDropAlert(DeviceId deviceId, long rx, long tx, double lossPct) {
+        String msg = String.format("ANOMALY DROP %s: rx=%d tx=%d loss=%.1f%% (threshold %.1f%%)",
+                deviceId, rx, tx, lossPct, lossThresholdPackets);
+        log.warn(msg);
+        recordAlert(msg);
+        if (!autoIsolate) {
+            return;
         }
+        try {
+            deviceAdmin.isolate(deviceId);
+            quietUntil = Instant.now().plusSeconds(10);
+            String warning = String.format("Isolated %s", deviceId);
+            log.warn(warning);
+            recordAlert(warning);
+        } catch (ServiceException e) {
+            log.error("Error isolating device {}", deviceId, e);
+        }
+    }
+
+    @Nonnull
+    private static BiFunction<List<PacketDetail>, List<PacketDetail>, List<PacketDetail>> mergePacketDetailsBackIntoMap() {
+        return (existing, added) -> {
+            List<PacketDetail> combined = new ArrayList<>(existing);
+            combined.addAll(added);
+            return List.copyOf(combined);
+        };
     }
 
     private void checkRate(String name, long rate, int threshold, DeviceId source) {
@@ -597,6 +577,12 @@ public class NetworkMonitorComponent implements MonitorService {
                                     ps.portNumber(), statsDeviceId);
                             continue;
                         }
+                        Port port = deviceService.getPort(statsDeviceId, ps.portNumber());
+                        if (port == null || !port.isEnabled()) {
+                            log.debug("Not adding port {} for device {} as it is null or disabled", port, statsDeviceId);
+                            continue;
+                        }
+
                         pollDetails.add(new PacketDetail(statsDeviceId,
                                 ps.portNumber(),
                                 ps.packetsReceived(),
@@ -607,11 +593,7 @@ public class NetworkMonitorComponent implements MonitorService {
                     }
                     if (!pollDetails.isEmpty()) {
                         devicePacketMonitorMap.merge(statsDeviceId, List.copyOf(pollDetails),
-                                (existing, added) -> {
-                                    List<PacketDetail> combined = new ArrayList<>(existing);
-                                    combined.addAll(added);
-                                    return List.copyOf(combined);
-                                });
+                                mergePacketDetailsBackIntoMap());
                     }
                     break;
             }

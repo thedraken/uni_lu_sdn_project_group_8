@@ -36,6 +36,10 @@ public class DeviceAdmin {
      * @param deviceId The device ID to isolate
      */
     public void isolate(DeviceId deviceId) throws ServiceException {
+        if (isIsolated(deviceId)) {
+            //No need to isolate a device already isolated
+            return;
+        }
         Set<ConnectPoint> closedPorts = new HashSet<>();
         try {
             linkService.getDeviceIngressLinks(deviceId).forEach(link -> {
@@ -92,5 +96,9 @@ public class DeviceAdmin {
             }
             throw new ServiceException("Error trying to reinstate switch " + deviceId, e);
         }
+    }
+
+    public boolean isIsolated(DeviceId deviceId) {
+        return isolatedSwitches.containsKey(deviceId);
     }
 }
