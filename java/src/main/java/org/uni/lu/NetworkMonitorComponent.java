@@ -4,13 +4,11 @@ import org.onlab.packet.*;
 import org.onosproject.cfg.ComponentConfigService;
 import org.onosproject.core.ApplicationId;
 import org.onosproject.core.CoreService;
-import org.onosproject.net.ConnectPoint;
-import org.onosproject.net.Device;
-import org.onosproject.net.DeviceId;
-import org.onosproject.net.Host;
+import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceEvent;
 import org.onosproject.net.device.DeviceListener;
 import org.onosproject.net.device.DeviceService;
+import org.onosproject.net.device.PortStatistics;
 import org.onosproject.net.flow.FlowRuleEvent;
 import org.onosproject.net.flow.FlowRuleListener;
 import org.onosproject.net.flow.FlowRuleService;
@@ -28,6 +26,7 @@ import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.uni.lu.domain.PacketDetail;
 
 import java.time.Instant;
 import java.util.*;
@@ -36,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
 
 @SuppressWarnings("unused")
 @Component(immediate = true,
@@ -79,12 +79,16 @@ public class NetworkMonitorComponent implements MonitorService {
     @Reference(cardinality = ReferenceCardinality.MANDATORY)
     protected MeterService meterService;
 
+    @Reference(cardinality = ReferenceCardinality.MANDATORY)
+    protected DeviceAdmin deviceAdmin;
+
     private int packetInThreshold = 100;
     private int flowModThreshold = 100;
     private int newHostThreshold = 10;
     private int sustainedSeconds = 5;
     private int maxFlowsPerDevice = 1000;
     private int summaryInterval = 10;
+    private final Map<DeviceId, List<PacketDetail>> devicePacketMonitorMap = new ConcurrentHashMap<>();
     private int rateLimitKbps = 1000;
     private boolean autoMitigate = false;
 
@@ -108,6 +112,10 @@ public class NetworkMonitorComponent implements MonitorService {
     private final Map<DeviceId, AtomicLong> flowAdds = new ConcurrentHashMap<>();
     private final AtomicLong newHosts = new AtomicLong();
     private final Map<String, Integer> overThreshold = new ConcurrentHashMap<>();
+    private int packetCheckInterval = 10;
+    private int minimumReceivedPacketsToCheck = 50;
+    //50% threshold difference
+    private double lossThresholdPackets = 20.0;
 
     //Recent anomaly/recovery lines, served by the REST API's GET /alerts.
     //Bounded so a long run can never grow it without limit.
@@ -122,8 +130,11 @@ public class NetworkMonitorComponent implements MonitorService {
     private final AtomicLong summaryFlowRemoves = new AtomicLong();
     private final AtomicLong summaryTopologyEvents = new AtomicLong();
     private long secondsSinceSummary = 0;
+    private long secondsSincePacketCheck = 0;
 
     private ScheduledExecutorService executor;
+    private boolean autoIsolate = false;
+    private volatile Instant quietUntil = Instant.EPOCH;
 
     @Activate
     protected void activate(ComponentContext context) {
@@ -170,15 +181,19 @@ public class NetworkMonitorComponent implements MonitorService {
             return;
         }
         Dictionary<?, ?> properties = context.getProperties();
-        packetInThreshold = intProperty(properties, "packetInThreshold", packetInThreshold);
-        flowModThreshold = intProperty(properties, "flowModThreshold", flowModThreshold);
-        newHostThreshold = intProperty(properties, "newHostThreshold", newHostThreshold);
-        sustainedSeconds = intProperty(properties, "sustainedSeconds", sustainedSeconds);
-        maxFlowsPerDevice = intProperty(properties, "maxFlowsPerDevice", maxFlowsPerDevice);
-        summaryInterval = intProperty(properties, "summaryInterval", summaryInterval);
-        rateLimitKbps = intProperty(properties, "rateLimitKbps", rateLimitKbps);
-        autoMitigate = boolProperty(properties, "autoMitigate", autoMitigate);
-        roleAssignments = parseRoleAssignments(properties.get("roleAssignments"));
+        packetInThreshold = PropertyParser.intProperty(properties, "packetInThreshold", packetInThreshold);
+        flowModThreshold = PropertyParser.intProperty(properties, "flowModThreshold", flowModThreshold);
+        newHostThreshold = PropertyParser.intProperty(properties, "newHostThreshold", newHostThreshold);
+        sustainedSeconds = PropertyParser.intProperty(properties, "sustainedSeconds", sustainedSeconds);
+        maxFlowsPerDevice = PropertyParser.intProperty(properties, "maxFlowsPerDevice", maxFlowsPerDevice);
+        summaryInterval = PropertyParser.intProperty(properties, "summaryInterval", summaryInterval);
+        rateLimitKbps = PropertyParser.intProperty(properties, "rateLimitKbps", rateLimitKbps);
+        autoMitigate = PropertyParser.boolProperty(properties, "autoMitigate", autoMitigate);
+        packetCheckInterval = PropertyParser.intProperty(properties, "packetCheckInterval", packetCheckInterval);
+        minimumReceivedPacketsToCheck = PropertyParser.intProperty(properties, "minimumReceivedPacketsToCheck", minimumReceivedPacketsToCheck);
+        lossThresholdPackets = PropertyParser.doubleProperty(properties, "lossThresholdPackets", lossThresholdPackets);
+        autoIsolate = PropertyParser.boolProperty(properties, "autoIsolate", autoIsolate);
+        roleAssignments = PropertyParser.parseRoleAssignments(properties.get("roleAssignments"));
         log.info("Thresholds: packetIn={}/s flowMod={}/s newHosts={}/s for {}s, maxFlows={}",
                  packetInThreshold, flowModThreshold, newHostThreshold, sustainedSeconds,
                  maxFlowsPerDevice);
@@ -186,47 +201,7 @@ public class NetworkMonitorComponent implements MonitorService {
         log.info("RBAC role assignments: {}", roleAssignments);
     }
 
-    private static boolean boolProperty(Dictionary<?, ?> properties, @SuppressWarnings("SameParameterValue") String name, boolean current) {
-        Object value = properties.get(name);
-        if (value == null) {
-            return current;
-        }
-        return Boolean.parseBoolean(value.toString().trim());
-    }
 
-    private static Map<String, Role> parseRoleAssignments(Object raw) {
-        //Accepts "user:role,user:role,...". DS may hand us the commas already
-        //split into a String[], so cope with both that and a plain String.
-        Map<String, Role> map = new HashMap<>();
-        if (raw == null) {
-            return map;
-        }
-        String[] pairs = (raw instanceof String[])
-                ? (String[]) raw
-                : raw.toString().split(",");
-        for (String pair : pairs) {
-            String[] kv = pair.split(":");
-            if (kv.length == 2) {
-                Role role = Role.fromName(kv[1]);
-                if (role != null) {
-                    map.put(kv[0].trim(), role);
-                }
-            }
-        }
-        return map;
-    }
-
-    private static int intProperty(Dictionary<?, ?> properties, String name, int current) {
-        Object value = properties.get(name);
-        if (value == null) {
-            return current;
-        }
-        try {
-            return Integer.parseInt(value.toString().trim());
-        } catch (NumberFormatException e) {
-            return current;
-        }
-    }
 
     private void everySecond() {
         try {
@@ -247,10 +222,70 @@ public class NetworkMonitorComponent implements MonitorService {
                 checkFlowTables();
                 logSummary();
             }
+
+            secondsSincePacketCheck++;
+            if (secondsSincePacketCheck >= packetCheckInterval) {
+                secondsSincePacketCheck = 0;
+                checkPacketAnomalies();
+            }
+
         } catch (Exception e) {
             //An exception would stop the scheduled task for good
             log.error("Monitor check failed", e);
         }
+    }
+
+    private void checkPacketAnomalies() {
+        for (DeviceId deviceId : devicePacketMonitorMap.keySet()) {
+            List<PacketDetail> details = devicePacketMonitorMap.remove(deviceId);
+            if (details == null || deviceAdmin.isIsolated(deviceId) || Instant.now().isBefore(quietUntil)) {
+                continue;
+            }
+            long sumOfReceivedPackets = details.stream().mapToLong(PacketDetail::getPacketsReceived).sum();
+            long sumOfSentPackets = details.stream().mapToLong(PacketDetail::getPacketsSent).sum();
+
+            if (sumOfReceivedPackets < minimumReceivedPacketsToCheck) {
+                devicePacketMonitorMap.merge(deviceId, List.copyOf(details),
+                        mergePacketDetailsBackIntoMap());
+                continue;
+            }
+
+            double lostPackets = 100.0 * (sumOfReceivedPackets - sumOfSentPackets) / sumOfReceivedPackets;
+            if (lostPackets > lossThresholdPackets) {
+                raiseDropAlert(deviceId, sumOfReceivedPackets, sumOfSentPackets, lostPackets);
+            } else {
+                log.debug("{} loss {}% within threshold {}", deviceId, String.format("%.1f", lostPackets), String.format("%.1f", lossThresholdPackets));
+            }
+        }
+    }
+
+    private void raiseDropAlert(DeviceId deviceId, long rx, long tx, double lossPct) {
+        String msg = String.format("ANOMALY DROP %s: rx=%d tx=%d loss=%.1f%% (threshold %.1f%%)",
+                deviceId, rx, tx, lossPct, lossThresholdPackets);
+        log.warn(msg);
+        recordAlert(msg);
+        if (!autoIsolate) {
+            return;
+        }
+        log.info("Isolating {} as packet difference {}% was greater than {}%", deviceId,
+                String.format("%.1f", lossPct), String.format("%.1f", lossThresholdPackets));
+        try {
+            deviceAdmin.isolate(deviceId);
+            quietUntil = Instant.now().plusSeconds(10);
+            String warning = String.format("Isolated %s", deviceId);
+            log.warn(warning);
+            recordAlert(warning);
+        } catch (ServiceException e) {
+            log.error("Error isolating device {}", deviceId, e);
+        }
+    }
+
+    private BiFunction<List<PacketDetail>, List<PacketDetail>, List<PacketDetail>> mergePacketDetailsBackIntoMap() {
+        return (existing, added) -> {
+            List<PacketDetail> combined = new ArrayList<>(existing);
+            combined.addAll(added);
+            return List.copyOf(combined);
+        };
     }
 
     private void checkRate(String name, long rate, int threshold, DeviceId source) {
@@ -529,8 +564,34 @@ public class NetworkMonitorComponent implements MonitorService {
                     log.info("PORT_UPDATED {} port {} enabled={}", event.subject().id(),
                              event.port().number(), event.port().isEnabled());
                     break;
-                default:
-                    //Port stats updates arrive every few seconds, too noisy to log
+                case PORT_STATS_UPDATED:
+                    DeviceId statsDeviceId = event.subject().id();
+                    Instant polledAt = Instant.now();
+                    List<PacketDetail> pollDetails = new ArrayList<>();
+                    for (PortStatistics ps : deviceService.getPortDeltaStatistics(statsDeviceId)) {
+                        if (PortNumber.LOCAL.equals(ps.portNumber())) {
+                            log.debug("Not adding port {} for device {} as it is the switch's internal port",
+                                    ps.portNumber(), statsDeviceId);
+                            continue;
+                        }
+                        Port port = deviceService.getPort(statsDeviceId, ps.portNumber());
+                        if (port == null || !port.isEnabled()) {
+                            log.debug("Not adding port {} for device {} as it is null or disabled", port, statsDeviceId);
+                            continue;
+                        }
+
+                        pollDetails.add(new PacketDetail(statsDeviceId,
+                                ps.portNumber(),
+                                ps.packetsReceived(),
+                                ps.packetsSent(),
+                                ps.packetsRxDropped(),
+                                ps.packetsTxDropped(),
+                                polledAt));
+                    }
+                    if (!pollDetails.isEmpty()) {
+                        devicePacketMonitorMap.merge(statsDeviceId, List.copyOf(pollDetails),
+                                mergePacketDetailsBackIntoMap());
+                    }
                     break;
             }
         }

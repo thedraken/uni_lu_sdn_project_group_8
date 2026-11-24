@@ -8,6 +8,7 @@ docker rm -f onos 2>/dev/null || true
 docker run -d \
   --name onos \
   --net onos-net \
+  -e TZ=UTC \
   -p 6653:6653 \
   -p 8181:8181 \
   -p 8101:8101 \
@@ -54,12 +55,33 @@ docker cp onos_group_8-1.0-SNAPSHOT.oar onos:/root/monitor.oar
 echo "Install ONOS monitor"
 docker exec onos /root/onos/bin/onos-app localhost install! /root/monitor.oar
 
-mkdir -p pcap
-MONITOR_LOG="output/onos_monitor.log"
-mkdir -p output
+#Waiting for service to be up, so we can change parameters
+sleep 10
+
+#Use bash arguments to turn on auto isolate a switch, if it breaks
+# the threshold count for number of packets sent vs received
+AUTO_ISOLATE=${AUTO_ISOLATE:-true}
+echo "Set autoIsolate=$AUTO_ISOLATE"
+AUTO_ISOLATE_SET=false
+HTTP_CODE=$(docker exec onos curl -s -o /dev/null -w "%{http_code}" -u onos:rocks \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"autoIsolate\": \"$AUTO_ISOLATE\"}" \
+  http://localhost:8181/onos/v1/configuration/org.uni.lu.NetworkMonitorComponent 2>/dev/null)
+if [ "$HTTP_CODE" = "200" ]; then
+    AUTO_ISOLATE_SET=true
+fi
+if [ "$AUTO_ISOLATE_SET" != "true" ]; then
+    echo "WARNING: could not set autoIsolate, the monitor keeps its default (false)" >&2
+fi
+
+#Each run gets its own UTC timestamped directory, so runs never overwrite each other
+RUN_DIR="output/$(date -u +%Y-%m-%d_%H-%M-%S)"
+mkdir -p "$RUN_DIR"
+echo "Run output directory: $RUN_DIR"
+MONITOR_LOG="$RUN_DIR/onos_monitor.log"
 echo "Write ONOS monitor details to $MONITOR_LOG"
 docker exec onos sh -c 'echo $$ > /tmp/monitor_tail.pid; exec tail -n 0 -F /root/onos/apache-karaf-*/data/log/karaf.log' \
-  | grep --line-buffered -E "ANOMALY|RECOVERED|SUMMARY|LINK_|DEVICE_" > "$MONITOR_LOG" &
+  | grep --line-buffered -E "ANOMALY|RECOVERED|SUMMARY|LINK_|DEVICE_|Isolated|isolated|reinstated" > "$MONITOR_LOG" &
 
 
 TEMP_PCAP="/tmp/sdn_capture.pcap"
@@ -82,8 +104,10 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
   #See if ny program ran, sometimes the command is too quick
   #read -p "Press [Enter] to continue, is tshark running?"
 
-  #Start my script
-  sudo python3 main.py
+  uv sync
+  #Start the script
+  # Can pass attack value into script
+  sudo .venv/bin/python main.py --output_dir "$RUN_DIR" "$@"
 
   echo "Sleeping for 5, make sure tshark has finished"
   sleep 5
@@ -97,15 +121,15 @@ if [ -f /tmp/group8_tshark.pid ] && sudo kill -0 "$(cat /tmp/group8_tshark.pid)"
 
   echo "Move the capture to its destination"
   if [ -f "$TEMP_PCAP" ]; then
-    if sudo mv "$TEMP_PCAP" pcap/; then
-      echo "Capture complete: pcap/$(basename "$TEMP_PCAP")"
+    if sudo mv "$TEMP_PCAP" "$RUN_DIR/"; then
+      echo "Capture complete: $RUN_DIR/$(basename "$TEMP_PCAP")"
     else
       echo "ERROR: Failed to move PCAP file." >&2
     fi
   else
     echo "WARNING: PCAP file was not created." >&2
   fi
-  ls -lh pcap/
+  ls -lh "$RUN_DIR"/
 else
   echo "tshark failed to start!"
   cat /tmp/tshark_debug.log
@@ -117,4 +141,4 @@ docker exec onos sh -c 'if [ -f /tmp/monitor_tail.pid ]; then
   kill "$(cat /tmp/monitor_tail.pid)" 2>/dev/null || true
   rm -f /tmp/monitor_tail.pid
 fi' 2>/dev/null || true
-echo "ONOS monitor log: $MONITOR_LOG"
+echo "Run output saved in: $RUN_DIR"
