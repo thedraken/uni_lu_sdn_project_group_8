@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import argparse
 import os
+import signal
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -8,6 +10,7 @@ from mininet.cli import CLI
 from mininet.log import info
 
 import attacks.blackhole
+import attacks.babbling_probe
 import attacks.common
 import attacks.greyhole
 import attacks.random_drop
@@ -18,7 +21,13 @@ OUTPUT_ROOT = "output"
 
 
 def start_attack(net, args):
-    if args.attack == "greyhole":
+    if args.attack == "babbling_probe":
+        attacks.babbling_probe.do_attack(
+            net, args.target,
+            rate=args.babbling_rate if args.babbling_sustained else None,
+            duration=args.duration,
+        )
+    elif args.attack == "greyhole":
         attacks.greyhole.do_attack(net, args.target, args.loss)
     elif args.attack == "blackhole":
         attacks.blackhole.do_attack(net, args.target)
@@ -27,7 +36,9 @@ def start_attack(net, args):
 
 
 def stop_attack(net, args):
-    if args.attack == "greyhole" or args.attack == "blackhole":
+    if args.attack == "babbling_probe":
+        attacks.babbling_probe.stop_attack(net, args.target)
+    elif args.attack == "greyhole" or args.attack == "blackhole":
         attacks.common.stop_attack(net, args.target, args.attack)
     elif args.attack == "random":
         attacks.random_drop.stop_attack(net, args.target)
@@ -46,34 +57,64 @@ def run_attack(net, args):
     # so loss and recovery can be lined up with the ONOS log
     ping_log = os.path.join(args.output_dir, "ping.log")
     info(f"Continuous ping {src.name} -> {dst.name}, written to {ping_log}\n")
-    src.cmd(
-        f"ping -D -O -i 0.2 {dst.IP()} > {os.path.abspath(ping_log)} 2>&1 &")
-    log_event(f"PING_START {src.name} {src.IP()} -> {dst.name} {dst.IP()}")
-    time.sleep(args.pre_attack)
+    with open(ping_log, "w") as ping_output:
+        ping_process = src.popen(
+            ["ping", "-D", "-O", "-i", "0.2", dst.IP()],
+            stdout=ping_output,
+            stderr=subprocess.STDOUT
+        )
 
-    try:
-        if args.baseline:
-            log_event("BASELINE_START no attack")
-        else:
-            start_attack(net, args)
-        if args.cli:
-            info(
-                "Attack running, opening the CLI; exit it to stop the attack\n")
-            CLI(net)
-        else:
-            time.sleep(args.duration)
-    finally:
-        # Always revert the attack, even after Ctrl-C or an error
-        if args.baseline:
-            log_event("BASELINE_STOP")
-        else:
-            stop_attack(net, args)
+        try:
+            log_event(
+                f"PING_START {src.name} {src.IP()} -> "
+                f"{dst.name} {dst.IP()}"
+            )
 
-    if not args.cli:
-        # Watch the network recover after the attack ends
-        time.sleep(args.post_attack)
-    src.cmd("pkill -INT -f 'ping -D -O'")
-    log_event("PING_STOP")
+            time.sleep(args.pre_attack)
+
+            try:
+                if args.baseline:
+                    log_event("BASELINE_START no attack")
+                else:
+                    start_attack(net, args)
+
+                if args.cli:
+                    info(
+                        "Attack running, opening the CLI; "
+                        "exit it to stop the attack\n"
+                    )
+                    CLI(net)
+                else:
+                    time.sleep(args.duration)
+
+            finally:
+                if args.baseline:
+                    log_event("BASELINE_STOP")
+                else:
+                    stop_attack(net, args)
+
+            if not args.cli:
+                time.sleep(args.post_attack)
+
+        finally:
+            if ping_process.poll() is None:
+                ping_process.send_signal(signal.SIGINT)
+
+            try:
+                ping_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                ping_process.terminate()
+                try:
+                    ping_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    ping_process.kill()
+                    ping_process.wait()
+
+            log_event("PING_STOP")
+
+    with open(ping_log) as result:
+        if "packets transmitted" not in result.read():
+            info("WARNING: No final ping summary available.\n")
 
 
 if __name__ == "__main__":
@@ -88,11 +129,15 @@ if __name__ == "__main__":
                             help="Comma separated switches to attach hosts to, e.g. s0,s2; "
                                  "the others only carry transit traffic. Default: every switch")
     arg_parser.add_argument("--attack", type=str,
-                            choices=["greyhole", "blackhole", "random"])
+                            choices=["greyhole", "blackhole", "random", "babbling_probe"])
     arg_parser.add_argument("--baseline", action="store_true",
                             help="Run the same timed ping sequence as an attack run, without any attack")
     arg_parser.add_argument("--target", type=str, default="s1",
                             help="Name of the switch to compromise, e.g. s1")
+    arg_parser.add_argument("--babbling_sustained", action="store_true",
+                            help="Opt in to bounded lab traffic; --duration must be 1-30 seconds")
+    arg_parser.add_argument("--babbling_rate", type=int, default=100,
+                            help="Sustained probe aggregate rate across two links, 2-100 packets/s")
     arg_parser.add_argument("--loss", type=int, default=50,
                             help="Greyhole only: percentage of transit packets to drop (0-100)")
     arg_parser.add_argument("--random_interval", type=int, default=5,
@@ -119,6 +164,11 @@ if __name__ == "__main__":
 
     if args.baseline and args.attack:
         arg_parser.error("--baseline cannot be combined with --attack")
+    if args.babbling_sustained:
+        if args.attack != "babbling_probe" or not 1 <= args.duration <= 30:
+            arg_parser.error("Sustained babbling requires --attack babbling_probe and --duration 1-30")
+        if not 2 <= args.babbling_rate <= 100:
+            arg_parser.error("--babbling_rate must be between 2 and 100")
     if not 0 <= args.loss <= 100:
         arg_parser.error("--loss must be between 0 and 100")
     host_switches = args.host_switches.split(
@@ -128,6 +178,12 @@ if __name__ == "__main__":
         args.output_dir = os.path.join(
             OUTPUT_ROOT,
             datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S"))
+    # This script writes attack.log (appending) and ping.log (overwriting). setup_script.sh
+    # already puts onos_monitor.log into the directory, so only these two files are refused.
+    if args.attack == "babbling_probe" and any(
+            os.path.exists(os.path.join(args.output_dir, name))
+            for name in ("attack.log", "ping.log")):
+        arg_parser.error("Babbling output directory already contains attack.log or ping.log")
     os.makedirs(args.output_dir, exist_ok=True)
     attacks.common.set_output_dir(args.output_dir)
     info(f"Writing run logs to {args.output_dir}\n")
