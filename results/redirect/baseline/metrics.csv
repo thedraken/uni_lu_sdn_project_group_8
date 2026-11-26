@@ -1,0 +1,2 @@
+mode,compromised,sender,intended,wrong,baseline_loss_pct,recovery_loss_pct
+baseline,of:0000000000000000,10.0.0.1,10.0.0.4,10.0.0.7,0.0,53.333333333333336

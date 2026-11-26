@@ -1,0 +1,2 @@
+mode,compromised,sender,intended,wrong,baseline_loss_pct,recovery_loss_pct,detect_time_s,detect_time_audit_s,detect_time_probe_s,identified_switch,identified_correct,isolate_time_s,recovery_time_s
+attack,of:0000000000000000,10.0.0.1,10.0.0.4,10.0.0.7,0.0,0.0,0.12139248847961426,None,0.12139248847961426,of:0000000000000000,True,0.026889801025390625,15.253070831298828
