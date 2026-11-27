@@ -54,7 +54,7 @@ This copies the required files into `~/group_8` inside the VM using SSH port `80
 If the repository was cloned directly inside the VM, run from the repository root:
 
 ```bash
-./setup_vm.sh
+bash setup_vm.sh
 ```
 
 **5. Start the SDN environment**
@@ -82,8 +82,10 @@ AUTO_ISOLATE=false bash setup_script.sh
 
 ## Running an Attack
 
-The attacks emulate a compromised switch that drops transit packets. Loss is applied with `tc netem` on the target
-switch's ports towards other switches, so ONOS cannot see or remove it and the switch's own hosts are not affected.
+The packet-dropping attacks (`blackhole`, `greyhole` and `random`) emulate a compromised switch that drops transit
+packets. Loss is applied with `tc netem` on the target switch's ports towards other switches, so ONOS cannot see or
+remove it and the switch's own hosts are not affected. The `babbling_probe` attack is described in the Babbling Switch
+Scenario section.
 
 | Attack      | Behaviour                                                                                       |
 |-------------|-------------------------------------------------------------------------------------------------|
@@ -112,7 +114,7 @@ exited.
 | `--topology_type`           | `mesh`            | `mesh`, `ring` or `linear`                                                      |
 | `--switches` / `--hosts`    | `3` / `10`        | Number of switches and hosts                                                    |
 | `--host_switches`           | every switch      | Comma separated switches to attach hosts to, e.g. `s0,s2`                       |
-| `--attack`                  | none              | `blackhole`, `greyhole` or `random`; without it the Mininet CLI opens as before |
+| `--attack`                  | none              | `blackhole`, `greyhole`, `random` or `babbling_probe`; without it the Mininet CLI opens as before |
 | `--target`                  | `s1`              | Switch to compromise                                                            |
 | `--loss`                    | `50`              | Greyhole only: percentage of packets to drop                                    |
 | `--random_interval`         | `5`               | Random only: seconds between new loss rates                                     |
@@ -134,6 +136,72 @@ curl -u onos:rocks -X POST -H "Content-Type: application/json" \
 
 `switch/isolate` takes the same body to isolate a switch manually.
 
+## Babbling Switch Scenario
+
+A babbling switch generates excessive traffic. The monitor detects this behaviour using OpenFlow port statistics collected by ONOS approximately every five seconds.
+
+The detection metric is `excessRate = max(0, (TX - RX) / elapsedSeconds)`, where TX and RX are the packet counter deltas summed over enabled non-local ports. By default, an anomaly is reported when the excess rate exceeds 50 packets/s for two consecutive samples.
+
+If automatic isolation is enabled, the monitor disables the neighbouring ports connected to the authorised target switch. Reinstatement is performed manually through the REST API.
+
+### Configuration
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `BABBLING_EXCESS_THRESHOLD` | `50` | Excess packet rate threshold (packets/s) |
+| `BABBLING_SUSTAINED_SAMPLES` | `2` | Consecutive abnormal samples |
+| `AUTO_ISOLATE_BABBLING` | `false` | Enable automatic isolation |
+| `BABBLING_TARGET_DEVICE` | empty | Device authorised for automatic isolation |
+| `PCAP_MAX_KB` | `50000` | Packet capture size limit (KB) |
+
+The target device setting restricts automatic isolation, not detection.
+
+### Running the Scenario
+
+The scenario uses a mesh of three switches and ten hosts attached to `s1` and `s2`. The target switch is `s0` (`of:000000000000000a`), with no directly attached hosts.
+
+**Baseline** (from `~/group_8`):
+
+```bash
+AUTO_ISOLATE=false AUTO_ISOLATE_BABBLING=false bash setup_script.sh --topology_type mesh --switches 3 --hosts 10 \
+  --host_switches s1,s2 --baseline --ping_src h0 --ping_dst h9 --duration 60
+```
+
+**Babbling scenario** (from `~/group_8`):
+
+```bash
+AUTO_ISOLATE=false AUTO_ISOLATE_BABBLING=true BABBLING_TARGET_DEVICE=of:000000000000000a \
+  bash setup_script.sh --topology_type mesh --switches 3 --hosts 10 --host_switches s1,s2 \
+  --attack babbling_probe --target s0 --babbling_sustained --babbling_rate 100 --duration 30 \
+  --pre_attack 20 --ping_src h0 --ping_dst h9 --cli
+```
+
+The probe simulates excessive outgoing traffic rather than an actual compromised switch. `AUTO_ISOLATE=false` disables the existing packet-drop isolation mechanism so that only the Babbling detector performs automatic isolation.
+
+### Verification and Reinstatement
+
+While the Mininet CLI is open:
+
+- ONOS log: `docker logs onos 2>&1 | grep -E "BABBLING|isolated|reinstated"` shows `ANOMALY BABBLING_DATA` and the isolation events.
+- Ports and links: `curl -s -u onos:rocks http://localhost:8181/onos/v1/devices/of:0000000000000001/ports` (and `.../of:0000000000000002/ports`) shows port 1 disabled, and `curl -s -u onos:rocks http://localhost:8181/onos/v1/links` no longer lists the links of `s0`.
+- Connectivity: `pingall` in the CLI between the legitimate hosts.
+- After `PROBE_FINISHED` appears in `attack.log`, reinstate the switch and repeat the port and link checks:
+
+```bash
+curl -u onos:rocks -X POST -H 'Content-Type: application/json' \
+  -d '{"device":"of:000000000000000a"}' http://localhost:8181/onos/monitor/switch/reinstate
+```
+
+Reinstatement is always manual. Do not restart the application while a switch is isolated.
+
+### Tests
+
+Run the Java detection and integration tests from the repository root:
+
+```bash
+bash java/tests/run_babbling_test.sh
+```
+
 ## Key Scripts
 
 | File                                     | Purpose                                                                                |
@@ -144,6 +212,8 @@ curl -u onos:rocks -X POST -H "Content-Type: application/json" \
 | `setup_script.sh`                        | Starts ONOS and the SDN environment                                                    |
 | `python/main.py`                         | Launches the topology, traffic tests and attacks                                       |
 | `python/sdn_setup/sdn_topology_setup.py` | Defines the network topology and tests                                                 |
+| `python/attacks/babbling_probe.py`       | Probe traffic on the two links of s0 (Babbling Switch scenario)                        |
+| `java/tests/run_babbling_test.sh`        | Builds the monitor and runs the two Babbling Switch Java tests                         |
 | `python/attacks/blackhole.py`            | Complete dropping attack                                                               |
 | `python/attacks/greyhole.py`             | Partial dropping attack                                                                |
 | `python/attacks/random_drop.py`          | Random dropping attack                                                                 |
@@ -171,8 +241,9 @@ The setup script stops packet capture and saves the generated files. Each run ge
 UTC timestamped directory, `output/<YYYY-MM-DD_HH-MM-SS>/`, so earlier runs are never overwritten:
 
 - `output/<timestamp>/sdn_capture.pcap` — network traffic capture
-- `output/<timestamp>/onos_monitor.log` — ONOS monitoring log, including `ANOMALY DROP` alerts and switch isolation
+- `output/<timestamp>/onos_monitor.log` — ONOS monitoring log, including `ANOMALY DROP` and Babbling alerts and switch isolation
 - `output/<timestamp>/attack.log` — timestamped start, change and stop of each attack (attack runs only)
 - `output/<timestamp>/ping.log` — timestamped continuous ping between the two test hosts (attack runs only)
 
-**Note:** PCAP files may become large during extended experiments. Ensure sufficient disk space is available.
+**Note:** PCAP files may become large during extended experiments. The capture stops when it reaches `PCAP_MAX_KB`
+(default 50000 KB); increase it for longer runs and ensure sufficient disk space is available.

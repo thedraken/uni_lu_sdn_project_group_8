@@ -48,6 +48,9 @@ public class DeviceAdmin {
                 deviceAdminService.changePortState(originPort.deviceId(), originPort.port(), false);
                 closedPorts.add(originPort);
             });
+            if (closedPorts.isEmpty()) {
+                throw new ServiceException("No neighbour ports found for switch " + deviceId);
+            }
             //Calling isolate() twice might overwrite the saved ports with an empty set if ONOS no longer sees the links, preventing reinstate() from restoring them.
             isolatedSwitches.computeIfAbsent(deviceId, id -> ConcurrentHashMap.newKeySet()).addAll(closedPorts);
             log.info("Switch {} was isolated on ports: [{}]", deviceId, StringHelper.collectionToString(closedPorts, ";"));

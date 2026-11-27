@@ -11,3 +11,7 @@ packetCheckInterval|INTEGER|10|How often, in seconds, the packet limits should b
 minimumReceivedPacketsToCheck|INTEGER|50|Minimum number of packets the device needs to have received to be checked for any dropped packets
 lossThresholdPackets|DOUBLE|20|The amount of packets to differ between sent and received before it can be announced as faulty
 autoIsolate|BOOLEAN|false|If the loss threshold is exceeded, should the switch be auto isolated?
+autoIsolateBabbling|BOOLEAN|false|Enable automatic isolation for babbling switch anomalies
+babblingTargetDevice|STRING||Device authorised for experimental babbling isolation
+babblingExcessThreshold|INTEGER|50|Excess outgoing packets per second threshold
+babblingSustainedSamples|INTEGER|2|Consecutive abnormal port statistics samples

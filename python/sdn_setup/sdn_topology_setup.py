@@ -35,7 +35,13 @@ def _create_sdn_topology_(do_tests:bool=False, number_of_hosts:int=7,
         info(f"Create {number_of_switches} switches and link them")
         switches = []
         for i in range(number_of_switches):
-            s = __net__.addSwitch('s{}'.format(i), protocols='OpenFlow13')
+            # Reserve DPID 0xA for s0 and skip it for other switches.
+            dpid_value = 10 if i == 0 else (i if i < 10 else i + 1)
+            s = __net__.addSwitch(
+                's{}'.format(i),
+                protocols='OpenFlow13',
+                dpid=f"{dpid_value:016x}"
+            )
             if (topology_type == "linear" or topology_type == "ring") and switches:
                 info(f"Adding link between switch {s} and switch"
                      f" {switches[-1]}")

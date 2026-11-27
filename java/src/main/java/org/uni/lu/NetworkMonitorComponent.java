@@ -49,7 +49,11 @@ import java.util.function.BiFunction;
                 "summaryInterval:Integer=10",
                 "roleAssignments=alice:admin,bob:operator,charlie:observer,onos:admin",
                 "rateLimitKbps:Integer=1000",
-                "autoMitigate:Boolean=false"
+                "autoMitigate:Boolean=false",
+                "autoIsolateBabbling:Boolean=false",
+                "babblingExcessThreshold:Integer=50",
+                "babblingSustainedSamples:Integer=2",
+                "babblingTargetDevice="
         })
 public class NetworkMonitorComponent implements MonitorService {
 
@@ -134,6 +138,8 @@ public class NetworkMonitorComponent implements MonitorService {
 
     private ScheduledExecutorService executor;
     private boolean autoIsolate = false;
+    private volatile boolean autoIsolateBabbling = false;
+    private volatile String babblingTargetDevice = "";
     private volatile Instant quietUntil = Instant.EPOCH;
 
     @Activate
@@ -193,6 +199,7 @@ public class NetworkMonitorComponent implements MonitorService {
         minimumReceivedPacketsToCheck = PropertyParser.intProperty(properties, "minimumReceivedPacketsToCheck", minimumReceivedPacketsToCheck);
         lossThresholdPackets = PropertyParser.doubleProperty(properties, "lossThresholdPackets", lossThresholdPackets);
         autoIsolate = PropertyParser.boolProperty(properties, "autoIsolate", autoIsolate);
+        readBabblingConfig(properties);
         roleAssignments = PropertyParser.parseRoleAssignments(properties.get("roleAssignments"));
         log.info("Thresholds: packetIn={}/s flowMod={}/s newHosts={}/s for {}s, maxFlows={}",
                  packetInThreshold, flowModThreshold, newHostThreshold, sustainedSeconds,
@@ -232,6 +239,142 @@ public class NetworkMonitorComponent implements MonitorService {
         } catch (Exception e) {
             //An exception would stop the scheduled task for good
             log.error("Monitor check failed", e);
+        }
+    }
+
+    private synchronized void readBabblingConfig(Dictionary<?, ?> properties) {
+        boolean previousAuthorization = autoIsolateBabbling;
+        String previousTarget = babblingTargetDevice;
+        int previousThreshold = babblingExcessThreshold;
+        int previousSamples = babblingSustainedSamples;
+
+        autoIsolateBabbling = PropertyParser.boolProperty(properties,
+                "autoIsolateBabbling", autoIsolateBabbling);
+        babblingExcessThreshold = Math.max(1, PropertyParser.intProperty(properties,
+                "babblingExcessThreshold", babblingExcessThreshold));
+        babblingSustainedSamples = Math.max(1, PropertyParser.intProperty(properties,
+                "babblingSustainedSamples", babblingSustainedSamples));
+        Object target = properties.get("babblingTargetDevice");
+        babblingTargetDevice = target == null ? "" : target.toString().trim();
+
+        if (previousAuthorization != autoIsolateBabbling || !previousTarget.equals(babblingTargetDevice)
+                || previousThreshold != babblingExcessThreshold || previousSamples != babblingSustainedSamples) {
+            resetBabblingState(null);
+        }
+        log.info("Babbling: threshold={}/s sustainedSamples={} autoIsolate={} target={}",
+                babblingExcessThreshold, babblingSustainedSamples,
+                autoIsolateBabbling, babblingTargetDevice);
+    }
+
+    private final Map<DeviceId, Set<PortNumber>> babblingLastPorts = new HashMap<>();
+
+    private final Map<DeviceId, Instant> babblingLastPoll =
+            new ConcurrentHashMap<>();
+
+    private final Map<DeviceId, Integer> babblingExcessSamples =
+            new ConcurrentHashMap<>();
+
+    private volatile int babblingExcessThreshold = 50;
+    private volatile int babblingSustainedSamples = 2;
+
+    private synchronized void resetBabblingState(DeviceId deviceId) {
+        if (deviceId == null) {
+            babblingLastPorts.clear();
+            babblingLastPoll.clear();
+            babblingExcessSamples.clear();
+        } else {
+            babblingLastPorts.remove(deviceId);
+            babblingLastPoll.remove(deviceId);
+            babblingExcessSamples.remove(deviceId);
+        }
+    }
+
+    private synchronized void noteBabblingPortChange(DeviceId deviceId, Port port) {
+        Set<PortNumber> lastPorts = babblingLastPorts.get(deviceId);
+        if (lastPorts != null && !PortNumber.LOCAL.equals(port.number())
+                && lastPorts.contains(port.number()) != port.isEnabled()) {
+            resetBabblingState(deviceId);
+        }
+    }
+
+    private synchronized void checkDataPlaneBabbling(
+            DeviceId deviceId,
+            List<PacketDetail> details,
+            Set<PortNumber> sampledPorts,
+            Instant polledAt) {
+
+        // Missing/unsupported counters must interrupt a sustained sequence.
+        if (details.isEmpty() || details.stream().anyMatch(detail ->
+                detail.getPacketsReceived() < 0 || detail.getPacketsSent() < 0)
+                || deviceAdmin.isIsolated(deviceId)) {
+            resetBabblingState(deviceId);
+            return;
+        }
+
+        Set<PortNumber> previousPorts = babblingLastPorts.put(deviceId, sampledPorts);
+        Instant previous = babblingLastPoll.put(deviceId, polledAt);
+        if (previous == null || !sampledPorts.equals(previousPorts)) {
+            // The delta may straddle a port transition. Seed the next interval.
+            babblingExcessSamples.remove(deviceId);
+            return;
+        }
+
+        double elapsed =
+                java.time.Duration.between(previous, polledAt)
+                        .toMillis() / 1000.0;
+
+        if (elapsed <= 0 || elapsed > 15) {
+            babblingExcessSamples.remove(deviceId);
+            return;
+        }
+
+        long rx = details.stream()
+                .mapToLong(PacketDetail::getPacketsReceived).sum();
+
+        long tx = details.stream()
+                .mapToLong(PacketDetail::getPacketsSent).sum();
+
+        if (rx < 0 || tx < 0) {
+            babblingExcessSamples.remove(deviceId);
+            return;
+        }
+
+        double excessRate = Math.max(0.0, (tx - rx) / elapsed);
+
+        int samples = babblingExcessSamples.getOrDefault(deviceId, 0);
+        log.info("BABBLING_DATA_RATE {} rx={} tx={} interval={} excessRate={} "
+                        + "threshold={} sustainedSamples={} samples={}",
+                deviceId, rx, tx, elapsed, excessRate, babblingExcessThreshold,
+                babblingSustainedSamples,
+                excessRate > babblingExcessThreshold ? samples + 1 : 0);
+
+        if (excessRate > babblingExcessThreshold) {
+            samples++;
+            babblingExcessSamples.put(deviceId, samples);
+
+            if (samples == babblingSustainedSamples) {
+                String message = String.format(
+                        "ANOMALY BABBLING_DATA %s excessRate=%.2f samples=%d",
+                        deviceId, excessRate, samples);
+
+                log.warn(message);
+                recordAlert(message);
+
+                if (autoIsolateBabbling) {
+                    handleBabblingIsolation(deviceId);
+                }
+            }
+        } else {
+            if (samples >= babblingSustainedSamples) {
+                String message = String.format(
+                        "RECOVERED BABBLING_DATA %s excessRate=%.2f",
+                        deviceId, excessRate);
+
+                log.info(message);
+                recordAlert(message);
+            }
+
+            babblingExcessSamples.remove(deviceId);
         }
     }
 
@@ -286,6 +429,28 @@ public class NetworkMonitorComponent implements MonitorService {
             combined.addAll(added);
             return List.copyOf(combined);
         };
+    }
+
+    private void handleBabblingIsolation(DeviceId source) {
+        if (babblingTargetDevice.isEmpty()
+                || !source.toString().equals(babblingTargetDevice)) {
+            log.warn("BABBLING_ISOLATION_SKIPPED {}: target not authorised",
+                     source);
+            return;
+        }
+
+        if (deviceAdmin.isIsolated(source)) {
+            return;
+        }
+
+        try {
+            deviceAdmin.isolate(source);
+            quietUntil = Instant.now().plusSeconds(10);
+            log.info("BABBLING_ISOLATION_REQUESTED {}", source);
+            recordAlert("BABBLING_ISOLATION_REQUESTED " + source);
+        } catch (ServiceException e) {
+            log.error("BABBLING_ISOLATION_FAILED {}", source, e);
+        }
     }
 
     private void checkRate(String name, long rate, int threshold, DeviceId source) {
@@ -447,6 +612,7 @@ public class NetworkMonitorComponent implements MonitorService {
 
     @Override
     public void resetCounters() {
+        resetBabblingState(null);
         packetIns.clear();
         flowAdds.clear();
         newHosts.set(0);
@@ -555,11 +721,13 @@ public class NetworkMonitorComponent implements MonitorService {
                 case DEVICE_ADDED:
                 case DEVICE_REMOVED:
                 case DEVICE_AVAILABILITY_CHANGED:
+                    resetBabblingState(event.subject().id());
                     summaryTopologyEvents.incrementAndGet();
                     log.warn("{} {} available={}", event.type(), event.subject().id(),
                              deviceService.isAvailable(event.subject().id()));
                     break;
                 case PORT_UPDATED:
+                    noteBabblingPortChange(event.subject().id(), event.port());
                     summaryTopologyEvents.incrementAndGet();
                     log.info("PORT_UPDATED {} port {} enabled={}", event.subject().id(),
                              event.port().number(), event.port().isEnabled());
@@ -568,6 +736,7 @@ public class NetworkMonitorComponent implements MonitorService {
                     DeviceId statsDeviceId = event.subject().id();
                     Instant polledAt = Instant.now();
                     List<PacketDetail> pollDetails = new ArrayList<>();
+                    Set<PortNumber> sampledPorts = new HashSet<>();
                     for (PortStatistics ps : deviceService.getPortDeltaStatistics(statsDeviceId)) {
                         if (PortNumber.LOCAL.equals(ps.portNumber())) {
                             log.debug("Not adding port {} for device {} as it is the switch's internal port",
@@ -580,6 +749,7 @@ public class NetworkMonitorComponent implements MonitorService {
                             continue;
                         }
 
+                        sampledPorts.add(ps.portNumber());
                         pollDetails.add(new PacketDetail(statsDeviceId,
                                 ps.portNumber(),
                                 ps.packetsReceived(),
@@ -592,6 +762,7 @@ public class NetworkMonitorComponent implements MonitorService {
                         devicePacketMonitorMap.merge(statsDeviceId, List.copyOf(pollDetails),
                                 mergePacketDetailsBackIntoMap());
                     }
+                    checkDataPlaneBabbling(statsDeviceId, pollDetails, sampledPorts, polledAt);
                     break;
             }
         }
